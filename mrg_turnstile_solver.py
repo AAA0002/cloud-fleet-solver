@@ -235,57 +235,81 @@ def get_webshare_proxy() -> dict | None:
 ACCOUNTS_FILE = os.path.join(BASE_DIR, "accounts.json")
 
 def load_all_fleet_uids() -> list:
+    """Dynamically discovers all fleet UIDs from accounts.json, Upstash Redis, or cloud sync without hardcoded limits."""
+    # 1. Local accounts.json
     if os.path.exists(ACCOUNTS_FILE):
         try:
             with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
                 accs = json.load(f)
                 uids = [int(a["user_id"]) for a in accs if a.get("user_id")]
-                if len(uids) >= 18:
+                if uids:
                     return uids
         except Exception:
             pass
+
+    # 2. Dynamic discovery from Upstash Redis fleet:tokens:*
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            req = urllib.request.Request(
+                f"{UPSTASH_URL}/keys/fleet:tokens:*",
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                d = json.loads(r.read().decode())
+                keys = d.get("result", [])
+                uids = sorted(list(set(int(k.split(":")[-1]) for k in keys if k.split(":")[-1].isdigit())))
+                if uids:
+                    return uids
+        except Exception:
+            pass
+
+        # 3. Dynamic discovery from fleet:accounts
+        try:
+            req = urllib.request.Request(
+                f"{UPSTASH_URL}/get/fleet:accounts",
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                d = json.loads(r.read().decode())
+                raw = d.get("result")
+                if raw:
+                    accs = json.loads(raw) if isinstance(raw, str) else raw
+                    uids = [int(a["user_id"]) for a in accs if isinstance(a, dict) and a.get("user_id")]
+                    if uids:
+                        return uids
+        except Exception:
+            pass
+
+    # 4. Fallback roster
     return [
-        6727787768,  # Master (Arif Hossain)
-        8881914294,  # Nancy
-        7648254021,  # Koram
-        8826375659,  # Arif
-        8450010161,  # Nadim
-        8782429452,  # Kaitlyn
-        7734849205,  # Node 7
-        8025472383,  # Node 8
-        8851426148,  # Node 9
-        8203342513,  # Node 10
-        8190649727,  # MD. Arif
-        7487048946,  # Sanzida
-        8741547543,  # Abid (3)
-        8727040932,  # Node 14
-        7749125802,  # Node 15
-        7954290138,  # Node 16
-        8841038141,  # Node 17
-        8975442879,  # Node 18
-        8937908003,  # Node 19
-        8609131528   # Node 20
+        6727787768, 8881914294, 7648254021, 8826375659, 8450010161,
+        8782429452, 7734849205, 8025472383, 8851426148, 8203342513,
+        8190649727, 7487048946, 8741547543, 8727040932, 7749125802,
+        7954290138, 8841038141, 8975442879, 8937908003, 8609131528,
+        8669217201
     ]
 
 FLEET_UIDS = load_all_fleet_uids()
 
 
 def send_tg_alert(text: str):
-    """Sends notification to Owner / Backup channel."""
-    if not ALERT_BOT_TOKEN or not OWNER_ID:
+    """Sends notification to Owner, Backup channel, and AAA Admin notification channel."""
+    if not ALERT_BOT_TOKEN:
         return
-    try:
-        url = f"https://api.telegram.org/bot{ALERT_BOT_TOKEN}/sendMessage"
-        payload = json.dumps({
-            "chat_id": OWNER_ID,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True
-        }).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10)
-    except Exception as e:
-        logger.warning(f"Telegram notification warning: {e}")
+    targets = [t for t in [OWNER_ID, BACKUP_CHANNEL, os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")] if t]
+    for chat_id in targets:
+        try:
+            url = f"https://api.telegram.org/bot{ALERT_BOT_TOKEN}/sendMessage"
+            payload = json.dumps({
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True
+            }).encode("utf-8")
+            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10)
+        except Exception as e:
+            logger.warning(f"Telegram notification warning for {chat_id}: {e}")
 
 
 def load_all_miniapp_tokens() -> dict:
@@ -2186,7 +2210,7 @@ def solve_atf_math(question_text: str) -> str:
     if not question_text:
         return "0"
     import re
-    q_lower = question_text.lower().strip()
+    q_lower = question_text.lower().replace("=", " ").replace("?", " ").strip()
 
     # 1. Factoid & Time Units
     if "days in a week" in q_lower or "days a week" in q_lower: return "7"
@@ -2209,7 +2233,7 @@ def solve_atf_math(question_text: str) -> str:
     }
 
     # 2. Tokenize words, digits and operators
-    tokens = re.findall(r"[a-z0-9\+\-\*\/\%\=]+", q_lower)
+    tokens = re.findall(r"[a-z0-9\+\-\*\/\%]+", q_lower)
     converted_tokens = []
     i = 0
     while i < len(tokens):

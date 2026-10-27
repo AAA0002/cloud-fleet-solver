@@ -27,7 +27,7 @@ VICTORS_API = "https://server.victors.company/api"
 VICTORS_ORIGIN = "https://app.victors.company"
 
 
-async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: dict, account_name: str, max_runs: int = 3) -> dict:
+async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: dict, account_name: str, max_runs: int = 10) -> dict:
     """
     Executes safe Deep Mine expeditions for an authenticated account.
     Returns summary of games played and balance changes.
@@ -41,7 +41,8 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
                 logger.warning(f"[{account_name}] /me returned HTTP {resp.status}")
                 return stats
             me_data = await resp.json()
-            user = me_data.get("state", {}).get("user", {})
+            st = me_data.get("state") or {}
+            user = st.get("user") or {}
             balance = user.get("inAppBalance", 0.0)
             stats["initial_balance"] = balance
             stats["final_balance"] = balance
@@ -177,7 +178,9 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
                         paid = res_obj.get("paid", run_state.get("bag", 0.0))
                         refund = res_obj.get("refund", 0.0)
                         net = res_obj.get("net", paid - 25.0)
-                        balance = dig_res.get("state", {}).get("user", {}).get("inAppBalance", balance + paid)
+                        st = dig_res.get("state") or {}
+                        user = st.get("user") or {}
+                        balance = user.get("inAppBalance", balance + paid)
                         stats["runs_played"] += 1
                         stats["total_paid"] += paid
                         stats["net_vic"] += net
@@ -199,7 +202,9 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
                         paid = res_obj.get("paid", run_state.get("bag", 0.0))
                         refund = res_obj.get("refund", 0.0)
                         net = res_obj.get("net", paid - 25.0)
-                        balance = end_res.get("state", {}).get("user", {}).get("inAppBalance", balance + paid)
+                        st = end_res.get("state") or {}
+                        user = st.get("user") or {}
+                        balance = user.get("inAppBalance", balance + paid)
                         stats["runs_played"] += 1
                         stats["total_paid"] += paid
                         stats["net_vic"] += net
