@@ -493,6 +493,7 @@ async def solve_turnstile_for_account(browser, acc_info: dict) -> bool:
         ver_res = verify_human_token(m_init, api_tok)
         if ver_res.get("success"):
             claim_mining_reward(m_init, api_tok)
+            safe_post(f"{API_BASE}/api/user/daily-checkin", {"initData": m_init})
             save_mrg_pass_to_upstash(uid, api_tok)
             return True
 
@@ -751,6 +752,7 @@ async def solve_turnstile_for_account(browser, acc_info: dict) -> bool:
         if ver_res.get("success"):
             logger.info(f"🎉 UID {uid}: Turnstile verify-human succeeded via DOM token!")
             claim_mining_reward(m_init, acquired_token["token"])
+            safe_post(f"{API_BASE}/api/user/daily-checkin", {"initData": m_init})
             save_mrg_pass_to_upstash(uid, acquired_token["token"])
             await context.close()
             return True
@@ -759,6 +761,7 @@ async def solve_turnstile_for_account(browser, acc_info: dict) -> bool:
         logger.info(f"✅ UID {uid}: Turnstile successfully solved natively by MiniApp!")
         if acquired_token["token"]:
             claim_mining_reward(m_init, acquired_token["token"])
+            safe_post(f"{API_BASE}/api/user/daily-checkin", {"initData": m_init})
             save_mrg_pass_to_upstash(uid, acquired_token["token"])
         await context.close()
         return True
@@ -860,6 +863,7 @@ async def solve_turnstile_for_account(browser, acc_info: dict) -> bool:
             if ver_res.get("success"):
                 logger.info(f"🎉 UID {uid}: Programmatic verify-human succeeded!")
                 claim_mining_reward(m_init, tok)
+                safe_post(f"{API_BASE}/api/user/daily-checkin", {"initData": m_init})
                 save_mrg_pass_to_upstash(uid, tok)
                 await context.close()
                 return True
@@ -1109,6 +1113,7 @@ async def solve_victors_turnstile(browser, uid: int, v_init: str, is_master: boo
                     window.turnstile.render = function(container, options) {{
                         try {{
                             if (options) {{
+                                options.appearance = 'always';
                                 const _origCb = options.callback;
                                 options.callback = function(tok) {{
                                     window.__victorsTurnstileToken = tok;
@@ -2447,6 +2452,41 @@ def check_and_farm_adxearn_rest(a_acc: dict) -> tuple[bool, int]:
     except Exception:
         pass
 
+    # Ad Networks & Flash Bonus Auto-Watch
+    try:
+        ns_code, ns_data = safe_get(f"{ADX_API}/rewards/ad-networks/status", extra_headers=adx_h)
+        if ns_code == 200 and isinstance(ns_data, dict):
+            st_dict = ns_data.get("status", {})
+            for net_slug, net_info in st_dict.items():
+                if isinstance(net_info, dict):
+                    watched = net_info.get("watchedToday", 0)
+                    cap = net_info.get("dailyCap", 0)
+                    cd_rem = net_info.get("cooldownRemainingSec", 0)
+                    if (cap == 0 or watched < cap) and cd_rem == 0:
+                        safe_post(f"{ADX_API}/rewards/ad-verify-start", {"network": net_slug}, extra_headers=adx_h)
+                        wait_s = 6 if net_slug == "adsgram" else 16
+                        time.sleep(wait_s)
+                        ac_code, ac_d = safe_post(f"{ADX_API}/rewards/ad-claim", {"network": net_slug}, extra_headers=adx_h)
+                        if ac_code == 200 and isinstance(ac_d, dict):
+                            claimed_pts += int(ac_d.get("reward") or 100)
+    except Exception:
+        pass
+
+    # CPA Offers Auto-Claim
+    try:
+        co_code, co_data = safe_get(f"{ADX_API}/cpa-offers", extra_headers=adx_h)
+        if co_code == 200 and isinstance(co_data, dict):
+            for off in co_data.get("offers", []):
+                oid = off.get("id")
+                if oid:
+                    safe_post(f"{ADX_API}/cpa-offers/start", {"offerId": oid}, extra_headers=adx_h)
+                    time.sleep(16)
+                    co_cl_code, co_cl_d = safe_post(f"{ADX_API}/cpa-offers/claim", {"offerId": oid}, extra_headers=adx_h)
+                    if co_cl_code == 200 and isinstance(co_cl_d, dict):
+                        claimed_pts += int(co_cl_d.get("reward") or 300)
+    except Exception:
+        pass
+
     logger.info(f"🤖 [AdxEarn] UID {a_uid}: Successfully farmed via REST (+{claimed_pts} pts).")
     return True, claimed_pts
 
@@ -2576,6 +2616,90 @@ def check_and_farm_diggo_rest(d_acc: dict) -> tuple[bool, float]:
     return True, claimed_amt
 
 
+def check_and_farm_chickenland_rest(c_acc: dict) -> tuple[bool, int, int]:
+    """
+    Fast REST handler for Chicken Land (@ChickenLandBot).
+    Sells accumulated eggs, completes daily & social tasks, claims referral rewards, and auto-buys hens.
+    Returns: (is_success, eggs_sold, hens_bought)
+    """
+    c_uid = c_acc["uid"]
+    c_init = c_acc.get("init_data")
+    if not c_init:
+        return False, 0, 0
+
+    try:
+        import base64
+        if c_init.startswith("TMA "):
+            b64_token = c_init[4:].strip()
+        elif "%3D" in c_init or "query_id=" in c_init or "user=" in c_init:
+            decoded = urllib.parse.unquote(c_init) if "%3D" in c_init else c_init
+            b64_token = base64.b64encode(decoded.encode("latin1")).decode("latin1")
+        else:
+            b64_token = c_init.strip()
+
+        c_headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"TMA {b64_token}",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36"
+        }
+        rpc_url = "https://app8968434282.tgcloud.ai/api/rpc"
+
+        def c_rpc(path: str, body: dict = None):
+            payload = {"method": "POST" if body is not None else "GET", "path": path, "body": body if body is not None else {}}
+            return safe_post(rpc_url, payload, extra_headers=c_headers)
+
+        code, me_data = c_rpc("/api/me", {"ref": "12668", "lang": "en"})
+        if code != 200 or not isinstance(me_data, dict) or not me_data.get("ok"):
+            return False, 0, 0
+
+        u = me_data.get("result", {}).get("user", {})
+        current_coins = float(u.get("coins", 0) or 0)
+        eggs_sold = 0
+        hens_bought = 0
+
+        # 1. Welcome bonus
+        if not u.get("welcome"):
+            c_rpc("/api/welcome", {})
+
+        # 2. Daily check-in
+        c_rpc("/api/task", {"id": "daily"})
+
+        # 3. Sell eggs if accumulated
+        if int(u.get("eggs", 0) or 0) > 0:
+            s_code, s_data = c_rpc("/api/sell", {})
+            if s_code == 200 and isinstance(s_data, dict) and s_data.get("ok"):
+                res_obj = s_data.get("result", {})
+                eggs_sold = int(res_obj.get("eggs", 0) or 0)
+                current_coins = float(res_obj.get("user", {}).get("coins", current_coins))
+
+        # 4. Uncompleted tasks
+        completed = set((u.get("tasks") or []) + (u.get("dayTasks") or []))
+        for tid in ["channel", "payments", "dnews", "dpay", "dpromo"]:
+            if tid not in completed:
+                c_rpc("/api/task/open", {"id": tid})
+                time.sleep(0.5)
+                t_c, t_d = c_rpc("/api/task", {"id": tid})
+                if t_c == 200 and isinstance(t_d, dict) and t_d.get("ok"):
+                    if t_d.get("result", {}).get("user"):
+                        current_coins = float(t_d["result"]["user"].get("coins", current_coins))
+
+        # 5. Referral claim
+        c_rpc("/api/ref/claim", {})
+
+        # 6. Auto-buy basic hens with accumulated coins
+        if current_coins >= 1000:
+            n_buy = int(current_coins // 1000)
+            b_code, b_data = c_rpc("/api/buy", {"breed": "basic", "n": n_buy})
+            if b_code == 200 and isinstance(b_data, dict) and b_data.get("ok"):
+                hens_bought = n_buy
+
+        logger.info(f"🐔 [ChickenLand] UID {c_uid}: Successfully farmed via REST (eggs sold: {eggs_sold}, hens bought: {hens_bought}).")
+        return True, eggs_sold, hens_bought
+    except Exception as ce:
+        logger.debug(f"[ChickenLand] UID {c_uid} rest farm note: {ce}")
+        return False, 0, 0
+
+
 async def run_mrg_auto_solver():
     """Main workflow: audits all 20 accounts across 5 bots, solves needed challenges, connects wallets, and auto-claims."""
     logger.info("====================================================================")
@@ -2601,10 +2725,13 @@ async def run_mrg_auto_solver():
     pepe_solved = 0
     adx_solved = 0
     diggo_solved = 0
+    chicken_solved = 0
     total_claimed_mrg = 0.0
     total_claimed_pepe = 0.0
     total_claimed_adx = 0
     total_claimed_diggo = 0.0
+    total_eggs_sold = 0
+    total_hens_bought = 0
 
     # 1. Fetch tokens and execute Fast REST Audits & Instant Harvesting
     logger.info("⚡ Phase 1: Rapid REST Pre-Flight & Instant Multi-Bot Harvesting...")
@@ -2677,6 +2804,15 @@ async def run_mrg_auto_solver():
                 diggo_solved += 1
                 total_claimed_diggo += d_claimed
 
+        # Chicken Land Fast REST Check
+        chicken_init = tok_dict.get("chickenland_init_data")
+        if chicken_init:
+            c_handled, c_eggs, c_hens = check_and_farm_chickenland_rest({"uid": uid, "init_data": chicken_init})
+            if c_handled:
+                chicken_solved += 1
+                total_eggs_sold += c_eggs
+                total_hens_bought += c_hens
+
         # MRG Status Check
         if not mrg_init:
             logger.warning(f"[{idx:02d}/{len(FLEET_UIDS)}] UID {uid}: No mrg_init_data found in Upstash. Skipping.")
@@ -2690,11 +2826,13 @@ async def run_mrg_auto_solver():
             logger.warning(f"[{idx:02d}/{len(FLEET_UIDS)}] UID {uid}: Could not fetch account status ({stat.get('error')}).")
             continue
 
-        # Claim MRG side tasks via REST
+        # Claim MRG side tasks via REST (including recurring 24h/12h/6h tasks)
         completed_mrg_tasks = set(stat.get("completedTaskIds", []))
         for tk in stat.get("tasks", []):
             tk_id = tk.get("taskId")
-            if tk_id and tk_id not in completed_mrg_tasks:
+            tk_type = str(tk.get("taskType") or "")
+            is_recurring = "recurring" in tk_type
+            if tk_id and (tk_id not in completed_mrg_tasks or is_recurring):
                 safe_post(f"{API_BASE}/api/user/claim-task", {"initData": mrg_init, "taskId": tk_id})
 
         # Auto unlock level if balance permits
@@ -2723,6 +2861,14 @@ async def run_mrg_auto_solver():
                 f"[{idx:02d}/{len(FLEET_UIDS)}] UID {uid}: ✅ MRG Human pass active until {stat['humanVerifiedUntil']}. "
                 f"Bal: {stat['inAppBalance']:.1f} MRG, Unclaimed: {stat['unclaimed']:.2f} MRG"
             )
+            # CRITICAL: Instantly claim mining reward and daily checkin via REST for accounts with active pass
+            if stat.get("unclaimed", 0) > 0.05:
+                c_res = claim_mining_reward(mrg_init)
+                if c_res.get("success"):
+                    logger.info(f"🎉 UID {uid}: Successfully claimed {stat['unclaimed']:.2f} MRG via active human pass!")
+                    total_claimed_mrg += stat["unclaimed"]
+            safe_post(f"{API_BASE}/api/user/daily-checkin", {"initData": mrg_init})
+            auto_unlock_mrg_level(mrg_init, cur_mrg_lvl, stat.get("inAppBalance", 0.0) + stat.get("unclaimed", 0.0))
 
     needed_mrg = len(accounts_needing_solver)
     total_browser_solves_needed = (
@@ -2990,6 +3136,7 @@ async def run_mrg_auto_solver():
         f"• <b>PepeGram Farmed:</b> {pepe_solved} (+{total_claimed_pepe:.2f} PEPE)\n"
         f"• <b>AdxEarn AI Farmed:</b> {adx_solved} (+{total_claimed_adx} Pts)\n"
         f"• <b>DiggoMiner Farmed:</b> {diggo_solved} (+{total_claimed_diggo:.2f} DIGGO)\n"
+        f"• <b>Chicken Land Farmed:</b> {chicken_solved} (+{total_eggs_sold} Eggs sold, {total_hens_bought} Hens bought)\n"
         f"• <b>Execution Time:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
         f"⚡ <i>100% Cloud Execution. Zero phone load.</i>"
     )
@@ -3000,6 +3147,7 @@ async def run_mrg_auto_solver():
         f"Vyro Connected {vyro_wallets_connected}/{len(vyro_accounts)}, "
         f"Kynex Farmed {kynex_farmed}/{len(kynex_accounts)}, "
         f"Pepe Farmed {pepe_solved}, Adx Farmed {adx_solved}, Diggo Farmed {diggo_solved}, "
+        f"Chicken Land Farmed {chicken_solved}, "
         f"Claimed {total_claimed_mrg:.2f} MRG, {total_claimed_knx:.2f} KNX, {total_claimed_pepe:.2f} PEPE."
     )
     send_tg_alert(report_msg)
