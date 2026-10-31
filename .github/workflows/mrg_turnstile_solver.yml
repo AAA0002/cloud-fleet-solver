@@ -33,12 +33,13 @@ jobs:
 
       - name: Run 100% Cloud Turnstile Solver & Multi-Bot Farming Cycle
         env:
-          UPSTASH_URL: "https://rich-emu-106119.upstash.io"
+          UPSTASH_URL: "https://internal-dodo-83852.upstash.io"
           UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
           ALERT_BOT_TOKEN: ${{ secrets.ALERT_BOT_TOKEN }}
           OWNER_ID: "6727787768"
           WEBSHARE_KEY: ${{ secrets.WEBSHARE_KEY }}
           WEBSHARE_KEY_2: ${{ secrets.WEBSHARE_KEY_2 }}
+          WEBSHARE_KEY_3: ${{ secrets.WEBSHARE_KEY_3 }}
           USE_BROWSER_PROXY: "0"
           CAPSOLVER_KEY: ${{ secrets.CAPSOLVER_KEY }}
           TWOCAPTCHA_KEY: ${{ secrets.TWOCAPTCHA_KEY }}
