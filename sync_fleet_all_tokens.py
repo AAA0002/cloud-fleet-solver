@@ -2,9 +2,9 @@
 """
 sync_fleet_all_tokens.py
 =============================================================================
-BIDIRECTIONAL 11-BOT TOKEN SYNCHRONIZER & STATE UNIFIER
+BIDIRECTIONAL 9-BOT TOKEN SYNCHRONIZER & STATE UNIFIER
 =============================================================================
-Synchronizes all 11 bot initData tokens across all 21 accounts between:
+Synchronizes all 9 bot initData tokens across all 24 accounts between:
   1. Upstash Redis `fleet:tokens:{uid}` (individual account keys)
   2. Upstash Redis `miniapp_tokens` & `fleet_miniapp_tokens` (master aggregated dictionaries)
   3. Local `accounts.json`
@@ -37,9 +37,7 @@ CF_SECRET_KEY = os.getenv("CF_SECRET_KEY") or env.get("CF_SECRET_KEY", "")
 PRIMARY_EDGE_NODE = "https://restore-agy.agorameet.workers.dev"
 
 TARGET_BOTS = [
-    "mrg",
     "atf",
-    "victors",
     "kynex",
     "pepegram",
     "adxearn",
@@ -51,9 +49,7 @@ TARGET_BOTS = [
 ]
 
 TOKEN_KEYS = [
-    "mrg_init_data",
     "atf_init_data",
-    "victors_init_data",
     "kynex_init_data",
     "pepegram_init_data",
     "adxearn_init_data",
