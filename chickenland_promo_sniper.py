@@ -7,7 +7,7 @@ CHICKEN LAND DUAL-ENGINE SUB-SECOND FLEET PROMO CODE SNIPER & AUTO-COMPOUNDER
 Combines:
 1. Real-Time MTProto Telegram Push Socket Listener (0ms push latency via Telethon)
 2. High-Frequency Non-Blocking Async HTTP Poller (2.5s fallback with cache-busting)
-3. Sub-Second Concurrent aiohttp Parallel Burst Engine across all 22 fleet accounts (~300-450ms)
+3. Sub-Second Concurrent aiohttp Parallel Burst Engine across all 24 fleet accounts (~300-450ms)
 4. Non-Blocking In-Memory State & Background Upstash Redis Persistence
 5. Autonomous Flock Reinvestment: buys basic hens automatically when coins >= 1000
 6. Cloud-Native: Zero Phone Load (designed to run 24/7 on Render Node 3)
@@ -46,7 +46,7 @@ REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID") or "6727787768"
 ADMIN_NOTIF_CHANNEL = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
 
 API_ID = int(os.getenv("API_ID") or os.getenv("TELEGRAM_API_ID") or 2040)
-API_HASH = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or ""
+API_HASH = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or "5cd9e5bbfb572a4429a0c54774153b47"
 
 USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
 SCRAPER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -65,31 +65,41 @@ def redis_command(cmd: str, *args) -> Any:
     """Synchronous Redis helper for initial startup loading."""
     if not UPSTASH_URL or not UPSTASH_TOKEN:
         return None
-    url = f"{UPSTASH_URL.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-    )
+    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"}
     try:
+        req = urllib.request.Request(UPSTASH_URL, data=json.dumps([cmd, *args]).encode('utf-8'), headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=4) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             return data.get("result")
     except Exception:
-        return None
+        try:
+            url = f"{UPSTASH_URL.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
+            req_get = urllib.request.Request(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+            with urllib.request.urlopen(req_get, timeout=4) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                return data.get("result")
+        except Exception:
+            return None
 
 async def async_redis_command(session: aiohttp.ClientSession, cmd: str, *args) -> Any:
     """Non-blocking async Redis helper for post-burst persistence."""
     if not UPSTASH_URL or not UPSTASH_TOKEN:
         return None
-    url = f"{UPSTASH_URL.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
-    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"}
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        async with session.post(UPSTASH_URL, json=[cmd, *args], headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 return data.get("result")
     except Exception:
-        pass
+        try:
+            url = f"{UPSTASH_URL.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
+            async with session.get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as resp2:
+                if resp2.status == 200:
+                    data2 = await resp2.json()
+                    return data2.get("result")
+        except Exception:
+            pass
     return None
 
 def is_code_seen(code: str) -> bool:
@@ -155,8 +165,8 @@ def get_b64_token(init_data: str) -> str:
 
 def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
     """
-    Loads all active Chicken Land WebApp authorization tokens across all 22 accounts.
-    Prioritizes Upstash Redis `miniapp_tokens`, then `fleet_miniapp_tokens.json`.
+    Loads all active Chicken Land WebApp authorization tokens across all 24 accounts.
+    Prioritizes Upstash Redis `miniapp_tokens`, then `fleet:tokens:{uid}`, then `accounts.json`, then `fleet_miniapp_tokens.json`.
     """
     global CACHED_FLEET_TOKENS
     if CACHED_FLEET_TOKENS and not force_refresh:
@@ -168,10 +178,12 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
 
     fleet = {}
     names = {}
+    accounts_list = []
     if os.path.exists(accs_path):
         try:
             with open(accs_path, "r", encoding="utf-8") as f:
-                for acc in json.load(f):
+                accounts_list = json.load(f)
+                for acc in accounts_list:
                     uid = str(acc.get("user_id", ""))
                     if uid:
                         names[uid] = acc.get("name", f"Account {uid}")
@@ -184,30 +196,78 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
             res = redis_command("GET", "miniapp_tokens")
             if res:
                 tok_map = json.loads(res) if isinstance(res, str) else res
-                for uid, toks in tok_map.items():
-                    tok = toks.get("chickenland_init_data") if isinstance(toks, dict) else None
-                    if tok:
-                        fleet[str(uid)] = {
-                            "user_id": str(uid),
-                            "name": names.get(str(uid), f"User {uid}"),
-                            "b64_token": get_b64_token(tok)
-                        }
-        except Exception:
+                while isinstance(tok_map, str):
+                    try:
+                        tok_map = json.loads(tok_map)
+                    except Exception:
+                        break
+                if isinstance(tok_map, dict):
+                    for uid, toks in tok_map.items():
+                        tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
+                        if tok:
+                            fleet[str(uid)] = {
+                                "user_id": str(uid),
+                                "name": names.get(str(uid), f"User {uid}"),
+                                "b64_token": get_b64_token(tok)
+                            }
+        except Exception as e:
             pass
 
-    # 2. Local fallback if Upstash incomplete
+    # 2. Check individual keys `fleet:tokens:{uid}` for any missing accounts
+    for acc in accounts_list:
+        uid = str(acc.get("user_id", ""))
+        if uid and uid not in fleet and UPSTASH_URL and UPSTASH_TOKEN:
+            try:
+                res = redis_command("GET", f"fleet:tokens:{uid}")
+                if res:
+                    u_toks = json.loads(res) if isinstance(res, str) else res
+                    while isinstance(u_toks, str):
+                        try:
+                            u_toks = json.loads(u_toks)
+                        except Exception:
+                            break
+                    if isinstance(u_toks, dict):
+                        tok = u_toks.get("chickenland_init_data") or u_toks.get("chicken_init_data")
+                        if tok:
+                            fleet[str(uid)] = {
+                                "user_id": str(uid),
+                                "name": names.get(str(uid), f"User {uid}"),
+                                "b64_token": get_b64_token(tok)
+                            }
+            except Exception:
+                pass
+
+    # 3. Fallback to accounts.json
+    for acc in accounts_list:
+        uid = str(acc.get("user_id", ""))
+        if uid and uid not in fleet:
+            tok = acc.get("chickenland_init_data") or acc.get("chicken_init_data")
+            if tok and isinstance(tok, str):
+                fleet[str(uid)] = {
+                    "user_id": str(uid),
+                    "name": names.get(str(uid), f"User {uid}"),
+                    "b64_token": get_b64_token(tok)
+                }
+
+    # 4. Fallback to fleet_miniapp_tokens.json
     if os.path.exists(tokens_path):
         try:
             with open(tokens_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                for uid, toks in data.items():
-                    tok = toks.get("chickenland_init_data")
-                    if tok and str(uid) not in fleet:
-                        fleet[str(uid)] = {
-                            "user_id": str(uid),
-                            "name": names.get(str(uid), f"User {uid}"),
-                            "b64_token": get_b64_token(tok)
-                        }
+                while isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except Exception:
+                        break
+                if isinstance(data, dict):
+                    for uid, toks in data.items():
+                        tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
+                        if tok and str(uid) not in fleet:
+                            fleet[str(uid)] = {
+                                "user_id": str(uid),
+                                "name": names.get(str(uid), f"User {uid}"),
+                                "b64_token": get_b64_token(tok)
+                            }
         except Exception:
             pass
 
@@ -228,13 +288,15 @@ def extract_code_from_text(text: str) -> Optional[Dict[str, Any]]:
     if not code:
         return None
 
-    # Exhaustion indicators
+    # Exhaustion indicators (case-insensitive and resilient across all limit tiers)
+    text_u = text.upper()
     is_exhausted = (
-        "ALL CLAIMED" in text
-        or "100 / 100" in text
-        or "100/100" in text
-        or "EXHAUSTED" in text
-        or "❌ ALL CLAIMED" in text
+        "ALL CLAIMED" in text_u
+        or "ALL_CLAIMED" in text_u
+        or "EXPIRED" in text_u
+        or "EXHAUSTED" in text_u
+        or "PLAYERS GOT IT" in text_u
+        or bool(re.search(r'—\s*[\d,]+\s*/\s*[\d,]+', text))
     )
     return {"code": code, "is_exhausted": is_exhausted}
 
@@ -287,10 +349,18 @@ async def redeem_single_account(
 
     try:
         async with session.post(RPC_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-            data = await resp.json()
+            data = None
+            try:
+                data = await resp.json(content_type=None)
+            except Exception:
+                try:
+                    text_resp = await resp.text()
+                    data = json.loads(text_resp)
+                except Exception:
+                    data = {}
             result["latency_ms"] = int((time.time() - t0) * 1000)
 
-            if data.get("ok"):
+            if isinstance(data, dict) and data.get("ok"):
                 res = data.get("result", {})
                 coins = res.get("coins", 0)
                 result["ok"] = True
@@ -314,30 +384,30 @@ async def redeem_single_account(
                         }
                         try:
                             async with session.post(RPC_URL, json=buy_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=4)) as b_resp:
-                                b_data = await b_resp.json()
+                                b_data = await b_resp.json(content_type=None)
                                 if b_data.get("ok"):
                                     result["hen_bought"] = True
                         except Exception:
                             pass
             else:
-                params = data.get("parameters", {})
-                status_code = params.get("code") or data.get("description", "ERROR")
-                result["code_status"] = status_code
+                params = (data.get("parameters") or {}) if isinstance(data, dict) else {}
+                status_code = params.get("code") or (data.get("description") if isinstance(data, dict) else None) or f"HTTP_{resp.status}"
+                result["code_status"] = str(status_code)
 
                 if (
                     status_code in ("PROMO_USED", "ALREADY_CLAIMED", "ALREADY_USED")
-                    or "already" in status_code.lower()
-                    or "used" in status_code.lower()
-                    or "claimed" in str(data.get("description", "")).lower()
+                    or "already" in str(status_code).lower()
+                    or "used" in str(status_code).lower()
+                    or "claimed" in str((data.get("description") if isinstance(data, dict) else "") or "").lower()
                 ):
                     if uid not in ACCOUNT_CLAIMED_CODES:
                         ACCOUNT_CLAIMED_CODES[uid] = set()
                     ACCOUNT_CLAIMED_CODES[uid].add(code)
                 elif (
                     status_code == "PROMO_FULL"
-                    or "full" in status_code.lower()
-                    or "limit" in status_code.lower()
-                    or "exhaust" in status_code.lower()
+                    or "full" in str(status_code).lower()
+                    or "limit" in str(status_code).lower()
+                    or "exhaust" in str(status_code).lower()
                 ):
                     EXHAUSTED_CODES.add(code)
 
@@ -579,6 +649,7 @@ async def start_mtproto_listener():
     sess_str = listener_acc["session_string"]
     acc_name = listener_acc.get("name", "Listener")
     client = TelegramClient(StringSession(sess_str), API_ID, API_HASH)
+    handlers_registered = False
 
     while True:
         try:
@@ -616,60 +687,63 @@ async def start_mtproto_listener():
 
             chat_targets = [entity] if entity else [CHANNEL_USERNAME, CHANNEL_ID]
 
-            # Define instant push handler for NEW messages (Bound directly to channel socket)
-            @client.on(events.NewMessage(chats=chat_targets))
-            async def on_new_promo_message(event):
-                cid = event.chat_id
-                uname = (getattr(event.chat, 'username', '') or '').lower()
-                if cid not in valid_chat_ids and uname != CHANNEL_USERNAME.lower():
-                    return
+            if not handlers_registered:
+                # Define instant push handler for NEW messages (Bound directly to channel socket)
+                @client.on(events.NewMessage(chats=chat_targets))
+                async def on_new_promo_message(event):
+                    cid = event.chat_id
+                    uname = (getattr(event.chat, 'username', '') or '').lower()
+                    if cid not in valid_chat_ids and uname != CHANNEL_USERNAME.lower():
+                        return
 
-                raw = event.raw_text or (event.message.message if event.message else "") or ""
-                parsed = extract_code_from_text(raw)
-                if not parsed:
-                    return
+                    raw = event.raw_text or (event.message.message if event.message else "") or ""
+                    parsed = extract_code_from_text(raw)
+                    if not parsed:
+                        return
 
-                code = parsed["code"]
-                is_ex = parsed["is_exhausted"]
-                print(f"[MTProto Sniper] ⚡ PUSH EVENT RECEIVED: Code={code}, Exhausted={is_ex}")
+                    code = parsed["code"]
+                    is_ex = parsed["is_exhausted"]
+                    print(f"[MTProto Sniper] ⚡ PUSH EVENT RECEIVED: Code={code}, Exhausted={is_ex}")
 
-                if is_ex:
-                    SEEN_CODES.add(code)
-                    EXHAUSTED_CODES.add(code)
-                    return
+                    if is_ex:
+                        SEEN_CODES.add(code)
+                        EXHAUSTED_CODES.add(code)
+                        return
 
-                if code not in CLAIMED_CODES and not is_code_claimed(code):
-                    print(f"🔥 [MTProto Sniper] NEW LIVE PROMO CODE DETECTED: {code}! LAUNCHING PARALLEL BURST...")
-                    t0 = time.time()
-                    report = await snipe_promo_fleet(code)
-                    elapsed = round(time.time() - t0, 3)
-                    print(f"✅ [MTProto Sniper] Burst complete for {code}: {report['claimed_count']}/{report['total_accounts']} claimed (+{report['total_coins']} coins) in {elapsed}s")
+                    if code not in CLAIMED_CODES and not is_code_claimed(code):
+                        print(f"🔥 [MTProto Sniper] NEW LIVE PROMO CODE DETECTED: {code}! LAUNCHING PARALLEL BURST...")
+                        t0 = time.time()
+                        report = await snipe_promo_fleet(code)
+                        elapsed = round(time.time() - t0, 3)
+                        print(f"✅ [MTProto Sniper] Burst complete for {code}: {report['claimed_count']}/{report['total_accounts']} claimed (+{report['total_coins']} coins) in {elapsed}s")
 
-            # Define instant push handler for EDITED messages
-            @client.on(events.MessageEdited(chats=chat_targets))
-            async def on_edited_promo_message(event):
-                cid = event.chat_id
-                uname = (getattr(event.chat, 'username', '') or '').lower()
-                if cid not in valid_chat_ids and uname != CHANNEL_USERNAME.lower():
-                    return
+                # Define instant push handler for EDITED messages
+                @client.on(events.MessageEdited(chats=chat_targets))
+                async def on_edited_promo_message(event):
+                    cid = event.chat_id
+                    uname = (getattr(event.chat, 'username', '') or '').lower()
+                    if cid not in valid_chat_ids and uname != CHANNEL_USERNAME.lower():
+                        return
 
-                raw = event.raw_text or (event.message.message if event.message else "") or ""
-                parsed = extract_code_from_text(raw)
-                if not parsed:
-                    return
+                    raw = event.raw_text or (event.message.message if event.message else "") or ""
+                    parsed = extract_code_from_text(raw)
+                    if not parsed:
+                        return
 
-                code = parsed["code"]
-                is_ex = parsed["is_exhausted"]
+                    code = parsed["code"]
+                    is_ex = parsed["is_exhausted"]
 
-                if is_ex:
-                    SEEN_CODES.add(code)
-                    EXHAUSTED_CODES.add(code)
-                    return
+                    if is_ex:
+                        SEEN_CODES.add(code)
+                        EXHAUSTED_CODES.add(code)
+                        return
 
-                if code not in CLAIMED_CODES and not is_code_claimed(code):
-                    print(f"🔥 [MTProto Sniper] CODE DETECTED IN EDITED MESSAGE: {code}! LAUNCHING BURST...")
-                    report = await snipe_promo_fleet(code)
-                    print(f"✅ [MTProto Sniper] Edit burst complete: {report['claimed_count']}/{report['total_accounts']} claimed (+{report['total_coins']} coins)")
+                    if code not in CLAIMED_CODES and not is_code_claimed(code):
+                        print(f"🔥 [MTProto Sniper] CODE DETECTED IN EDITED MESSAGE: {code}! LAUNCHING BURST...")
+                        report = await snipe_promo_fleet(code)
+                        print(f"✅ [MTProto Sniper] Edit burst complete: {report['claimed_count']}/{report['total_accounts']} claimed (+{report['total_coins']} coins)")
+
+                handlers_registered = True
 
             # Keep Telethon connected indefinitely
             await client.run_until_disconnected()
@@ -742,7 +816,7 @@ async def start_http_poller(poll_interval: float = 1.5):
 async def run_unified_sniper_daemon(poll_interval: float = 3.0):
     """
     Unified 24/7 Cloud Sniper Coordinator:
-    1. Pre-loads all 22 fleet tokens and historical codes into memory.
+    1. Pre-loads all 24 fleet tokens and historical codes into memory.
     2. Runs startup check to instantly snipe any unexhausted active code.
     3. Launches MTProto Push Socket Listener (0ms latency).
     4. Launches Secondary Async HTTP Poller (fallback redundancy).
@@ -783,10 +857,11 @@ async def run_unified_sniper_daemon(poll_interval: float = 3.0):
     except Exception as e:
         print(f"[Sniper Startup Scrape]: {e}")
 
-    # Launch both engines concurrently
+    # Launch both engines concurrently with resilient exception handling
     await asyncio.gather(
         start_mtproto_listener(),
-        start_http_poller(poll_interval=poll_interval)
+        start_http_poller(poll_interval=poll_interval),
+        return_exceptions=True
     )
 
 if __name__ == "__main__":
