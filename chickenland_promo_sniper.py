@@ -24,7 +24,16 @@ import aiohttp
 import urllib.parse
 import urllib.request
 import base64
+import logging
 from typing import Dict, Any, List, Set, Optional
+
+# Logger setup
+logger = logging.getLogger("chickenland_sniper")
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 try:
     from dotenv import load_dotenv
@@ -39,8 +48,15 @@ RAW_CHANNEL_ID = 4433995185
 CHANNEL_URL = "https://t.me/s/ChickenLandCodes"
 RPC_URL = "https://app8968434282.tgcloud.ai/api/rpc"
 
-UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "https://internal-dodo-83852.upstash.io"
+# Upstash Redis: Dual-cluster support with automatic fallback
+UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "https://rich-emu-106119.upstash.io"
 UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
+UPSTASH_STANDBY_URL = os.getenv("UPSTASH_STANDBY_URL") or "https://pleasant-locust-220893.upstash.io"
+UPSTASH_STANDBY_TOKEN = os.getenv("UPSTASH_STANDBY_TOKEN") or ""
+
+TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
+TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_AUTH_TOKEN") or ""
+
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN") or ""
 REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID") or "6727787768"
 ADMIN_NOTIF_CHANNEL = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
@@ -61,64 +77,196 @@ ACCOUNT_CLAIMED_CODES: Dict[str, Set[str]] = {}
 CACHED_FLEET_TOKENS: Dict[str, Dict[str, Any]] = {}
 BURST_LOCK = asyncio.Lock()
 
-def redis_command(cmd: str, *args) -> Any:
-    """Synchronous Redis helper for initial startup loading."""
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
+def turso_execute(sql: str, args: list = None) -> Optional[List[List[Any]]]:
+    """Synchronous Turso LibSQL pipeline execution."""
+    if not TURSO_TOKEN:
         return None
-    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"}
+    endpoint = TURSO_URL.rstrip("/").replace("libsql://", "https://") + "/v2/pipeline"
+    headers = {"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}
+    formatted_args = []
+    if args:
+        for a in args:
+            if isinstance(a, int):
+                formatted_args.append({"type": "integer", "value": str(a)})
+            else:
+                formatted_args.append({"type": "text", "value": str(a)})
+    req_body = {
+        "requests": [
+            {"type": "execute", "stmt": {"sql": sql, "args": formatted_args}}
+        ]
+    }
     try:
-        req = urllib.request.Request(UPSTASH_URL, data=json.dumps([cmd, *args]).encode('utf-8'), headers=headers, method="POST")
+        req = urllib.request.Request(endpoint, data=json.dumps(req_body).encode("utf-8"), headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=4) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            return data.get("result")
+            data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("results", [])
+            if results and results[0].get("response", {}).get("result", {}).get("rows"):
+                rows = results[0]["response"]["result"]["rows"]
+                return [[c.get("value") for c in r] for r in rows]
     except Exception:
-        try:
-            url = f"{UPSTASH_URL.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
-            req_get = urllib.request.Request(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-            with urllib.request.urlopen(req_get, timeout=4) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                return data.get("result")
-        except Exception:
-            return None
+        pass
+    return None
 
-async def async_redis_command(session: aiohttp.ClientSession, cmd: str, *args) -> Any:
-    """Non-blocking async Redis helper for post-burst persistence."""
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
+async def async_turso_execute(session: aiohttp.ClientSession, sql: str, args: list = None) -> Optional[List[List[Any]]]:
+    """Non-blocking async Turso LibSQL pipeline execution."""
+    if not TURSO_TOKEN:
         return None
-    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"}
+    endpoint = TURSO_URL.rstrip("/").replace("libsql://", "https://") + "/v2/pipeline"
+    headers = {"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}
+    formatted_args = []
+    if args:
+        for a in args:
+            if isinstance(a, int):
+                formatted_args.append({"type": "integer", "value": str(a)})
+            else:
+                formatted_args.append({"type": "text", "value": str(a)})
+    req_body = {
+        "requests": [
+            {"type": "execute", "stmt": {"sql": sql, "args": formatted_args}}
+        ]
+    }
     try:
-        async with session.post(UPSTASH_URL, json=[cmd, *args], headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        async with session.post(endpoint, json=req_body, headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as resp:
             if resp.status == 200:
                 data = await resp.json()
-                return data.get("result")
+                results = data.get("results", [])
+                if results and results[0].get("response", {}).get("result", {}).get("rows"):
+                    rows = results[0]["response"]["result"]["rows"]
+                    return [[c.get("value") for c in r] for r in rows]
     except Exception:
+        pass
+    return None
+
+def turso_get(key: str) -> Optional[str]:
+    rows = turso_execute("SELECT val FROM kv_mesh WHERE key = ? LIMIT 1", [key])
+    if rows and len(rows) > 0 and len(rows[0]) > 0:
+        return rows[0][0]
+    return None
+
+def turso_set(key: str, val: Any) -> bool:
+    val_str = json.dumps(val) if not isinstance(val, str) else val
+    now_ts = int(time.time())
+    res = turso_execute("INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, ?)", [key, val_str, now_ts])
+    return res is not None
+
+async def async_turso_get(session: aiohttp.ClientSession, key: str) -> Optional[str]:
+    rows = await async_turso_execute(session, "SELECT val FROM kv_mesh WHERE key = ? LIMIT 1", [key])
+    if rows and len(rows) > 0 and len(rows[0]) > 0:
+        return rows[0][0]
+    return None
+
+async def async_turso_set(session: aiohttp.ClientSession, key: str, val: Any) -> bool:
+    val_str = json.dumps(val) if not isinstance(val, str) else val
+    now_ts = int(time.time())
+    res = await async_turso_execute(session, "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, ?)", [key, val_str, now_ts])
+    return res is not None
+
+def redis_command(cmd: str, *args) -> Any:
+    """Synchronous Redis helper for initial startup loading with dual-cluster failover."""
+    endpoints = []
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        endpoints.append((UPSTASH_URL, UPSTASH_TOKEN))
+    if UPSTASH_STANDBY_URL and UPSTASH_STANDBY_TOKEN and (UPSTASH_STANDBY_URL != UPSTASH_URL):
+        endpoints.append((UPSTASH_STANDBY_URL, UPSTASH_STANDBY_TOKEN))
+
+    for u_url, u_tok in endpoints:
+        headers = {"Authorization": f"Bearer {u_tok}", "Content-Type": "application/json"}
         try:
-            url = f"{UPSTASH_URL.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
-            async with session.get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as resp2:
-                if resp2.status == 200:
-                    data2 = await resp2.json()
-                    return data2.get("result")
+            req = urllib.request.Request(u_url, data=json.dumps([cmd, *args]).encode('utf-8'), headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if "error" not in data:
+                    return data.get("result")
         except Exception:
-            pass
+            try:
+                url = f"{u_url.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
+                req_get = urllib.request.Request(url, headers={"Authorization": f"Bearer {u_tok}"})
+                with urllib.request.urlopen(req_get, timeout=4) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    if "error" not in data:
+                        return data.get("result")
+            except Exception:
+                pass
+    return None
+
+async def async_redis_command(session: aiohttp.ClientSession, cmd: str, *args) -> Any:
+    """Non-blocking async Redis helper for post-burst persistence with dual-cluster failover."""
+    endpoints = []
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        endpoints.append((UPSTASH_URL, UPSTASH_TOKEN))
+    if UPSTASH_STANDBY_URL and UPSTASH_STANDBY_TOKEN and (UPSTASH_STANDBY_URL != UPSTASH_URL):
+        endpoints.append((UPSTASH_STANDBY_URL, UPSTASH_STANDBY_TOKEN))
+
+    for u_url, u_tok in endpoints:
+        headers = {"Authorization": f"Bearer {u_tok}", "Content-Type": "application/json"}
+        try:
+            async with session.post(u_url, json=[cmd, *args], headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if "error" not in data:
+                        return data.get("result")
+        except Exception:
+            try:
+                url = f"{u_url.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
+                async with session.get(url, headers={"Authorization": f"Bearer {u_tok}"}, timeout=aiohttp.ClientTimeout(total=3)) as resp2:
+                    if resp2.status == 200:
+                        data2 = await resp2.json()
+                        if "error" not in data2:
+                            return data2.get("result")
+            except Exception:
+                pass
     return None
 
 def is_code_seen(code: str) -> bool:
     code = code.strip().upper()
     if code in SEEN_CODES:
         return True
-    return redis_command("SISMEMBER", "chickenland:seen_codes", code) == 1
+    # Dual-check: Redis and Turso LibSQL
+    try:
+        if redis_command("SISMEMBER", "chickenland:seen_codes", code) == 1:
+            return True
+    except Exception:
+        pass
+    try:
+        t_seen = turso_get("chickenland:seen_codes")
+        if t_seen:
+            parsed = json.loads(t_seen) if isinstance(t_seen, str) else t_seen
+            if isinstance(parsed, list) and code in parsed:
+                return True
+    except Exception:
+        pass
+    return False
 
 def is_code_claimed(code: str) -> bool:
     code = code.strip().upper()
     if code in CLAIMED_CODES:
         return True
-    return redis_command("SISMEMBER", "chickenland:claimed_codes", code) == 1
+    # Dual-check: Redis and Turso LibSQL
+    try:
+        if redis_command("SISMEMBER", "chickenland:claimed_codes", code) == 1:
+            return True
+    except Exception:
+        pass
+    try:
+        t_claimed = turso_get("chickenland:claimed_codes")
+        if t_claimed:
+            parsed = json.loads(t_claimed) if isinstance(t_claimed, str) else t_claimed
+            if isinstance(parsed, list) and code in parsed:
+                return True
+    except Exception:
+        pass
+    return False
 
 def mark_code_seen(code: str):
     code = code.strip().upper()
     SEEN_CODES.add(code)
     try:
         redis_command("SADD", "chickenland:seen_codes", code)
+    except Exception:
+        pass
+    try:
+        seen_list = list(SEEN_CODES)[-200:]
+        turso_set("chickenland:seen_codes", seen_list)
     except Exception:
         pass
 
@@ -129,11 +277,28 @@ def mark_code_claimed(code: str):
         redis_command("SADD", "chickenland:claimed_codes", code)
     except Exception:
         pass
+    try:
+        claimed_list = list(CLAIMED_CODES)[-200:]
+        turso_set("chickenland:claimed_codes", claimed_list)
+    except Exception:
+        pass
 
-def send_telegram_alert(text: str):
-    """Sends clean notification card to Admin channels."""
+ALERTED_CODES_TIMESTAMPS: Dict[str, float] = {}
+LAST_EMERGENCY_REFRESH_TIME: float = 0.0
+
+def send_telegram_alert(text: str, code: str = None):
+    """Sends clean notification card to Admin channels with strict anti-spam deduplication."""
     if not REPORT_BOT_TOKEN:
         return
+    if code:
+        c_up = str(code).strip().upper()
+        last_t = ALERTED_CODES_TIMESTAMPS.get(c_up, 0)
+        # Suppress duplicate alerts for the same code within 24 hours
+        if (time.time() - last_t) < 86400:
+            logger.info(f"[Sniper Anti-Spam] Suppressed duplicate alert for {c_up} (already alerted within 24h)")
+            return
+        ALERTED_CODES_TIMESTAMPS[c_up] = time.time()
+
     url = f"https://api.telegram.org/bot{REPORT_BOT_TOKEN}/sendMessage"
     targets = [REPORT_CHAT_ID]
     if ADMIN_NOTIF_CHANNEL and ADMIN_NOTIF_CHANNEL not in targets:
@@ -190,8 +355,35 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
+    # 0. Prioritize Turso LibSQL Mesh SSOT (Zero rate limits, 25M ops/mo)
+    for turso_k in ("fleet:tokens_state", "miniapp_tokens"):
+        try:
+            res_turso = turso_get(turso_k)
+            if res_turso:
+                tok_map = json.loads(res_turso) if isinstance(res_turso, str) else res_turso
+                while isinstance(tok_map, str):
+                    try:
+                        tok_map = json.loads(tok_map)
+                    except Exception:
+                        break
+                if isinstance(tok_map, dict):
+                    for uid, toks in tok_map.items():
+                        if str(uid) == "8881914294" or "nancy" in str(names.get(str(uid), "")).lower():
+                            continue
+                        tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
+                        if tok and str(uid) not in fleet:
+                            fleet[str(uid)] = {
+                                "user_id": str(uid),
+                                "name": names.get(str(uid), f"User {uid}"),
+                                "b64_token": get_b64_token(tok)
+                            }
+            if len(fleet) >= 20:
+                break
+        except Exception:
+            pass
+
     # 1. Prioritize Upstash Redis for ground-truth monolithic miniapp_tokens
-    if UPSTASH_URL and UPSTASH_TOKEN:
+    if UPSTASH_URL and UPSTASH_TOKEN and len(fleet) < 20:
         try:
             res = redis_command("GET", "miniapp_tokens")
             if res:
@@ -203,8 +395,10 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                         break
                 if isinstance(tok_map, dict):
                     for uid, toks in tok_map.items():
+                        if str(uid) == "8881914294" or "nancy" in str(names.get(str(uid), "")).lower():
+                            continue
                         tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
-                        if tok:
+                        if tok and str(uid) not in fleet:
                             fleet[str(uid)] = {
                                 "user_id": str(uid),
                                 "name": names.get(str(uid), f"User {uid}"),
@@ -216,6 +410,8 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
     # 2. Check individual keys `fleet:tokens:{uid}` for any missing accounts
     for acc in accounts_list:
         uid = str(acc.get("user_id", ""))
+        if str(uid) == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
+            continue
         if uid and uid not in fleet and UPSTASH_URL and UPSTASH_TOKEN:
             try:
                 res = redis_command("GET", f"fleet:tokens:{uid}")
@@ -240,6 +436,8 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
     # 3. Fallback to accounts.json
     for acc in accounts_list:
         uid = str(acc.get("user_id", ""))
+        if str(uid) == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
+            continue
         if uid and uid not in fleet:
             tok = acc.get("chickenland_init_data") or acc.get("chicken_init_data")
             if tok and isinstance(tok, str):
@@ -250,7 +448,7 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                 }
 
     # 4. Fallback to fleet_miniapp_tokens.json
-    if os.path.exists(tokens_path):
+    if os.path.exists(tokens_path) and len(fleet) < 20:
         try:
             with open(tokens_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -261,6 +459,8 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                         break
                 if isinstance(data, dict):
                     for uid, toks in data.items():
+                        if str(uid) == "8881914294" or "nancy" in str(names.get(str(uid), "")).lower():
+                            continue
                         tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
                         if tok and str(uid) not in fleet:
                             fleet[str(uid)] = {
@@ -271,7 +471,7 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
-    # 5. Cloudflare Edge Mesh High-Reliability Fallback (Guarantees all 24 accounts in cloud)
+    # 5. Cloudflare Edge Mesh High-Reliability Fallback (Guarantees all 23 accounts in cloud)
     if len(fleet) < 20:
         cf_endpoints = [
             "https://restore-agy.agorameet.workers.dev/api/miniapp/tokens",
@@ -289,9 +489,11 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                             for uid, toks in tok_dict.items():
                                 if not isinstance(toks, dict):
                                     continue
+                                u_name = toks.get("name") or names.get(str(uid), f"User {uid}")
+                                if str(uid) == "8881914294" or "nancy" in str(u_name).lower():
+                                    continue
                                 tok = toks.get("chickenland_init_data") or toks.get("chicken_init_data")
                                 if tok and str(uid) not in fleet:
-                                    u_name = toks.get("name") or names.get(str(uid), f"User {uid}")
                                     fleet[str(uid)] = {
                                         "user_id": str(uid),
                                         "name": u_name,
@@ -423,7 +625,10 @@ async def redeem_single_account(
             else:
                 params = (data.get("parameters") or {}) if isinstance(data, dict) else {}
                 status_code = params.get("code") or (data.get("description") if isinstance(data, dict) else None) or f"HTTP_{resp.status}"
-                result["code_status"] = str(status_code)
+                if resp.status == 401 or "unauthorized" in str(status_code).lower() or "invalid" in str(status_code).lower():
+                    result["code_status"] = "UNAUTHORIZED_EXPIRED"
+                else:
+                    result["code_status"] = str(status_code)
 
                 if (
                     status_code in ("PROMO_USED", "ALREADY_CLAIMED", "ALREADY_USED")
@@ -448,17 +653,57 @@ async def redeem_single_account(
 
     return result
 
+async def trigger_emergency_token_refresh():
+    """Trigger background token refresh on Render Node 3 when 401 Unauthorized occurs."""
+    global LAST_EMERGENCY_REFRESH_TIME
+    now_er = time.time()
+    if (now_er - LAST_EMERGENCY_REFRESH_TIME) < 600:
+        logger.info("[Sniper Emergency] Token refresh cooldown active (<10m), skipping duplicate trigger.")
+        return
+    LAST_EMERGENCY_REFRESH_TIME = now_er
+
+    try:
+        secret = os.getenv("SECRET_KEY") or os.getenv("CF_SECRET_KEY") or "aaafleet2025secure"
+        connector = aiohttp.TCPConnector(limit=5)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            headers = {"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}
+            for port in (10000, 8000):
+                try:
+                    async with session.post(
+                        f"http://127.0.0.1:{port}/collect-tokens?force=1",
+                        json={"source": "emergency_promo_unauthorized"},
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=5)
+                    ) as r:
+                        if r.status in (200, 401, 404):
+                            break
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
 async def snipe_promo_fleet(
     code: str,
     fleet: Optional[Dict[str, Dict[str, Any]]] = None,
     auto_buy_hens: bool = True,
-    send_alert: bool = True
+    send_alert: bool = True,
+    force: bool = False
 ) -> Dict[str, Any]:
     """
     Sub-Second Parallel Burst Engine:
     Redeems promo code concurrently across all fleet accounts in 300-450ms.
     """
     code = code.strip().upper()
+    if not force and (code in CLAIMED_CODES or code in EXHAUSTED_CODES):
+        logger.info(f"[Sniper Fast-Path] Code {code} already processed in current state, skipping duplicate burst.")
+        return {
+            "ok": True,
+            "code": code,
+            "claimed_count": 0,
+            "total_coins": 0,
+            "hens_bought": 0,
+            "status": "ALREADY_PROCESSED"
+        }
     async with BURST_LOCK:
         if not fleet or len(fleet) < 20:
             fleet = load_fleet_tokens(force_refresh=True)
@@ -480,6 +725,7 @@ async def snipe_promo_fleet(
         total_coins = sum(r["coins"] for r in successful)
         hens_bought = sum(1 for r in results if r.get("hen_bought"))
         is_full = any(r.get("code_status") == "PROMO_FULL" for r in results)
+        unauth_count = sum(1 for r in results if r.get("code_status") == "UNAUTHORIZED_EXPIRED" or "unauthor" in str(r.get("code_status", "")).lower())
 
         # Mark in memory fast sets
         SEEN_CODES.add(code)
@@ -488,12 +734,20 @@ async def snipe_promo_fleet(
         if is_full:
             EXHAUSTED_CODES.add(code)
 
-        # Non-blocking async persistence to Upstash Redis in background
-        async def persist_to_redis():
+        # Non-blocking async persistence to Turso LibSQL and Upstash Redis in background
+        async def persist_to_storage():
             try:
                 connector_bg = aiohttp.TCPConnector(limit=10)
                 async with aiohttp.ClientSession(connector=connector_bg) as bg_session:
                     await async_redis_command(bg_session, "SADD", "chickenland:seen_codes", code)
+                    try:
+                        seen_list = list(SEEN_CODES)[-200:]
+                        await async_turso_set(bg_session, "chickenland:seen_codes", seen_list)
+                        if successful:
+                            claimed_list = list(CLAIMED_CODES)[-200:]
+                            await async_turso_set(bg_session, "chickenland:claimed_codes", claimed_list)
+                    except Exception:
+                        pass
                     if successful:
                         await async_redis_command(bg_session, "SADD", "chickenland:claimed_codes", code)
                         for r in successful:
@@ -508,7 +762,7 @@ async def snipe_promo_fleet(
             except Exception:
                 pass
 
-        asyncio.create_task(persist_to_redis())
+        asyncio.create_task(persist_to_storage())
 
         report = {
             "ok": True,
@@ -519,22 +773,44 @@ async def snipe_promo_fleet(
             "hens_bought": hens_bought,
             "burst_time_sec": total_time,
             "is_exhausted": is_full,
+            "unauthorized_count": unauth_count,
             "details": results
         }
 
-        # Telegram Alert Card
-        if send_alert and successful:
-            alert_msg = (
-                f"⚡ <b>CHICKEN LAND PROMO CODE SNIPED!</b> 🐔\n\n"
-                f"🎟 <b>Code:</b> <code>{code}</code>\n"
-                f"💰 <b>Total Coins Claimed:</b> +{total_coins:,} Coins\n"
-                f"👥 <b>Fleet Success:</b> {len(successful)}/{len(fleet)} accounts claimed\n"
-                f"⏱ <b>Burst Latency:</b> {total_time}s\n"
-            )
-            if hens_bought > 0:
-                alert_msg += f"🐣 <b>Autonomous Expansion:</b> {hens_bought} basic hens purchased!\n"
-            alert_msg += f"🛡 <i>Cloud Node 3 Sub-Second Sniper Engine</i>"
-            send_telegram_alert(alert_msg)
+        # Telegram Alert Card with full operational transparency
+        if send_alert:
+            if successful:
+                alert_msg = (
+                    f"⚡ <b>CHICKEN LAND PROMO CODE SNIPED!</b> 🐔\n\n"
+                    f"🎟 <b>Code:</b> <code>{code}</code>\n"
+                    f"💰 <b>Total Coins Claimed:</b> +{total_coins:,} Coins\n"
+                    f"👥 <b>Fleet Success:</b> {len(successful)}/{len(fleet)} accounts claimed\n"
+                    f"⏱ <b>Burst Latency:</b> {total_time}s\n"
+                )
+                if hens_bought > 0:
+                    alert_msg += f"🐣 <b>Autonomous Expansion:</b> {hens_bought} basic hens purchased!\n"
+                alert_msg += f"🛡 <i>Cloud Node 3 Sub-Second Sniper Engine</i>"
+                send_telegram_alert(alert_msg, code=code)
+            elif unauth_count >= max(5, int(len(fleet) * 0.6)):
+                alert_msg = (
+                    f"⚠️ <b>CHICKEN LAND PROMO SNIPER ALERT</b> 🐔\n\n"
+                    f"🎟 <b>Code Detected:</b> <code>{code}</code>\n"
+                    f"❌ <b>Error:</b> {unauth_count}/{len(fleet)} accounts failed with <b>401 Unauthorized (Expired Tokens)</b>\n"
+                    f"⏱ <b>Burst Latency:</b> {total_time}s\n"
+                    f"🔄 <b>Autonomous Action:</b> Triggering emergency MTProto token refresh on Render Node 3...\n"
+                    f"🛡 <i>Cloud Node 3 Token Watchdog</i>"
+                )
+                send_telegram_alert(alert_msg, code=code)
+                asyncio.create_task(trigger_emergency_token_refresh())
+            elif is_full:
+                alert_msg = (
+                    f"ℹ️ <b>CHICKEN LAND PROMO CODE EXHAUSTED</b> 🐔\n\n"
+                    f"🎟 <b>Code:</b> <code>{code}</code>\n"
+                    f"❌ <b>Status:</b> All player spots already claimed by public users (500/500 full)\n"
+                    f"⏱ <b>Burst Reaction Latency:</b> {total_time}s\n"
+                    f"🛡 <i>Cloud Node 3 Sub-Second Sniper Engine</i>"
+                )
+                send_telegram_alert(alert_msg, code=code)
 
         return report
 
@@ -657,7 +933,25 @@ async def start_mtproto_listener():
         except Exception:
             pass
 
-    # Cloud Fallback: Load directly from Upstash Redis fleet:accounts if local file missing
+    # Cloud Fallback 1: Turso LibSQL High-Capacity Mesh SSOT (25M ops/mo, 100% available)
+    if not accounts and TURSO_TOKEN:
+        try:
+            for t_k in ("fleet:accounts", "fleet:live_state"):
+                t_accs = turso_get(t_k)
+                if t_accs:
+                    parsed_t = json.loads(t_accs) if isinstance(t_accs, str) else t_accs
+                    while isinstance(parsed_t, str):
+                        parsed_t = json.loads(parsed_t)
+                    if isinstance(parsed_t, dict) and "accounts" in parsed_t:
+                        accounts = parsed_t["accounts"]
+                    elif isinstance(parsed_t, list):
+                        accounts = parsed_t
+                    if accounts:
+                        break
+        except Exception:
+            pass
+
+    # Cloud Fallback 2: Load directly from Upstash Redis fleet:accounts if local file missing
     if not accounts and UPSTASH_URL and UPSTASH_TOKEN:
         try:
             res_r = redis_command("GET", "fleet:accounts")
@@ -672,6 +966,11 @@ async def start_mtproto_listener():
         if str(acc.get("user_id")) in ("7648254021", "6727787768") and acc.get("session_string"):
             listener_acc = acc
             break
+    if not listener_acc:
+        for acc in accounts:
+            if acc.get("session_string") and str(acc.get("user_id")) not in ("8881914294",):
+                listener_acc = acc
+                break
 
     if not listener_acc or not listener_acc.get("session_string"):
         print("[MTProto Sniper] No active listener session string found in local files or Redis.")
@@ -879,7 +1178,21 @@ async def run_unified_sniper_daemon(poll_interval: float = 3.0):
     fleet = load_fleet_tokens(force_refresh=True)
     print(f"Loaded {len(fleet)} accounts from fleet.")
 
-    # Initialize fast in-memory sets from Redis
+    # Initialize fast in-memory sets from Turso LibSQL & Redis
+    try:
+        t_seen = turso_get("chickenland:seen_codes")
+        if t_seen:
+            parsed = json.loads(t_seen) if isinstance(t_seen, str) else t_seen
+            if isinstance(parsed, list):
+                SEEN_CODES.update(parsed)
+        t_claimed = turso_get("chickenland:claimed_codes")
+        if t_claimed:
+            parsed = json.loads(t_claimed) if isinstance(t_claimed, str) else t_claimed
+            if isinstance(parsed, list):
+                CLAIMED_CODES.update(parsed)
+    except Exception:
+        pass
+
     if UPSTASH_URL and UPSTASH_TOKEN:
         try:
             seen_r = redis_command("SMEMBERS", "chickenland:seen_codes")
@@ -888,9 +1201,9 @@ async def run_unified_sniper_daemon(poll_interval: float = 3.0):
             claimed_r = redis_command("SMEMBERS", "chickenland:claimed_codes")
             if claimed_r and isinstance(claimed_r, list):
                 CLAIMED_CODES.update(claimed_r)
-            print(f"Pre-cached {len(SEEN_CODES)} seen codes and {len(CLAIMED_CODES)} claimed codes.")
         except Exception:
             pass
+    print(f"Pre-cached {len(SEEN_CODES)} seen codes and {len(CLAIMED_CODES)} claimed codes.")
 
     # Startup pre-flight check: snipe any active unexhausted code immediately
     try:
