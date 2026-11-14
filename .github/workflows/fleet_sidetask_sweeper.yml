@@ -46,13 +46,15 @@ jobs:
         run: |
           python finish_all_fleet_sidetasks.py
 
-      - name: 3. Audit Fleet Withdrawal Readiness & Payouts (Post-Flight)
+      - name: 3. Universal Fleet Auto-Withdrawal Sweep & Readiness Audit (Post-Flight)
         env:
           UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
           UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
           REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
+          PAYOUT_CHANNEL_ID: "-1004402765950"
         run: |
+          python scripts/maintenance/fleet_auto_withdrawal_engine.py --sweep
           python scripts/maintenance/audit_withdrawal_readiness.py
 
       - name: 4. Verify Zero-Secret Hygiene
