@@ -348,6 +348,88 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
         except Exception:
             pass
 
+    # 8. EarnVault
+    ev_init = tokens.get("earnvault_init_data") or tokens.get("ev_init_data")
+    ev_rf = tokens.get("earnvault_refresh_token")
+    if ev_init or ev_rf:
+        try:
+            ev_cents = float(tokens.get("earnvault_cents", 0) or acc.get("earnvault_cents", 0) or 0)
+            threshold = WITHDRAWAL_THRESHOLDS["earnvault"]["threshold"]
+            bal_usd = ev_cents / 100.0
+            is_ready = bal_usd >= threshold
+            report["protocols"]["earnvault"] = {
+                "balance": bal_usd, "threshold": threshold, "unit": "USD",
+                "ready": is_ready, "pct": min(100.0, round((bal_usd / threshold) * 100, 1)) if threshold > 0 else 0
+            }
+            if is_ready:
+                report["ready_to_withdraw"].append(("earnvault", bal_usd, "USD"))
+        except Exception:
+            pass
+
+    # 9. Kynex Network
+    knx_init = tokens.get("kynex_init_data") or tokens.get("knx_init_data")
+    if knx_init:
+        try:
+            knx_bal = float(tokens.get("kynex_coins", 0) or acc.get("kynex_coins", 0) or 0)
+            threshold = WITHDRAWAL_THRESHOLDS["kynex"]["threshold"]
+            is_ready = knx_bal >= threshold
+            report["protocols"]["kynex"] = {
+                "balance": knx_bal, "threshold": threshold, "unit": "KNX",
+                "ready": is_ready, "pct": min(100.0, round((knx_bal / threshold) * 100, 1)) if threshold > 0 else 0
+            }
+            if is_ready:
+                report["ready_to_withdraw"].append(("kynex", knx_bal, "KNX"))
+        except Exception:
+            pass
+
+    # 10. ATF Miner
+    atf_init = tokens.get("atf_init_data")
+    if atf_init:
+        try:
+            atf_bal = float(tokens.get("atf_balance", 0) or acc.get("atf_balance", 0) or 0)
+            threshold = WITHDRAWAL_THRESHOLDS["atf"]["threshold"]
+            is_ready = atf_bal >= threshold
+            report["protocols"]["atf"] = {
+                "balance": atf_bal, "threshold": threshold, "unit": "ATF",
+                "ready": is_ready, "pct": min(100.0, round((atf_bal / threshold) * 100, 1)) if threshold > 0 else 0
+            }
+            if is_ready:
+                report["ready_to_withdraw"].append(("atf", atf_bal, "ATF"))
+        except Exception:
+            pass
+
+    # 11. Victor's Company
+    vic_init = tokens.get("victors_init_data") or tokens.get("vic_init_data")
+    if vic_init:
+        try:
+            vic_bal = float(tokens.get("victors_balance", 0) or acc.get("victors_balance", 0) or 0)
+            threshold = WITHDRAWAL_THRESHOLDS["victors"]["threshold"]
+            is_ready = vic_bal >= threshold
+            report["protocols"]["victors"] = {
+                "balance": vic_bal, "threshold": threshold, "unit": "VICX",
+                "ready": is_ready, "pct": min(100.0, round((vic_bal / threshold) * 100, 1)) if threshold > 0 else 0
+            }
+            if is_ready:
+                report["ready_to_withdraw"].append(("victors", vic_bal, "VICX"))
+        except Exception:
+            pass
+
+    # 12. TAVORA Node
+    tvr_init = tokens.get("tavora_init_data") or tokens.get("tvr_init_data")
+    if tvr_init:
+        try:
+            tvr_bal = float(tokens.get("tavora_balance", 0) or acc.get("tavora_balance", 0) or 0)
+            threshold = WITHDRAWAL_THRESHOLDS["tavora"]["threshold"]
+            is_ready = tvr_bal >= threshold
+            report["protocols"]["tavora"] = {
+                "balance": tvr_bal, "threshold": threshold, "unit": "TVR",
+                "ready": is_ready, "pct": min(100.0, round((tvr_bal / threshold) * 100, 1)) if threshold > 0 else 0
+            }
+            if is_ready:
+                report["ready_to_withdraw"].append(("tavora", tvr_bal, "TVR"))
+        except Exception:
+            pass
+
     return report
 
 
@@ -378,6 +460,15 @@ async def run_audit_and_sweep(execute_sweep: bool = False, notify: bool = True):
         print("  🟡 All accounts are currently in the ACCUMULATING phase toward minimum thresholds.")
 
     print("=" * 75)
+
+    if execute_sweep and all_ready:
+        print("\n🚀 Executing automated sweeps for eligible claims...")
+        from fleet_auto_withdrawal_engine import execute_universal_fleet_auto_withdrawals
+        async with aiohttp.ClientSession() as sweep_session:
+            sweep_res = await execute_universal_fleet_auto_withdrawals(sweep_session, accounts)
+            print(f"\n🎉 Automated Sweep Completed: {sweep_res.get('total_withdrawn_count', 0)} payouts executed!")
+            for proto, count in sweep_res.get("by_protocol", {}).items():
+                print(f"  • {proto}: {count} completed successfully.")
 
 
 def main():

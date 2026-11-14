@@ -192,16 +192,36 @@ def clean_filesystem(dry_run: bool = False) -> Dict[str, Any]:
             else:
                 report["backups_pruned"] += 1
 
-    # 3. Clean temporary probe/test scripts in /tmp
-    for tmp_f in glob.glob("/tmp/probe_*.py") + glob.glob("/tmp/test_*.py"):
-        if not dry_run:
-            try:
-                os.remove(tmp_f)
+    # 3. Clean temporary probe/test scripts and leftover bundle dumps in /tmp
+    temp_patterns = [
+        "/tmp/probe_*.py", "/tmp/test_*.py", "/tmp/test_worker.*", "/tmp/test_cf_worker.*",
+        "/tmp/cf_worker_generated.js", "/tmp/victors_*.js", "/tmp/public_admin*.js",
+        "/tmp/public_user*.js", "/tmp/*.png", "/tmp/chicken_app.js"
+    ]
+    for pat in temp_patterns:
+        for tmp_f in glob.glob(pat):
+            if not dry_run:
+                try:
+                    os.remove(tmp_f)
+                    report["temp_files_removed"] += 1
+                except Exception:
+                    pass
+            else:
                 report["temp_files_removed"] += 1
-            except Exception:
-                pass
-        else:
-            report["temp_files_removed"] += 1
+
+    # 4. Clean orphaned SQLite/MTProto session-journal files in workspace
+    for root, dirs, files in os.walk(BASE_DIR):
+        for f in files:
+            if f.endswith(".session-journal"):
+                full_f = os.path.join(root, f)
+                if not dry_run:
+                    try:
+                        os.remove(full_f)
+                        report["temp_files_removed"] += 1
+                    except Exception:
+                        pass
+                else:
+                    report["temp_files_removed"] += 1
 
     print(f"  ✅ Pycache folders pruned: {report['pycache_removed']}")
     print(f"  ✅ Bytecode files removed: {report['pyc_files_removed']}")

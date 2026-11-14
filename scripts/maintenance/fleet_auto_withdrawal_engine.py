@@ -223,7 +223,8 @@ async def withdraw_chickenland(session: aiohttp.ClientSession, uid: str, name: s
                 if r_wd.status == 200:
                     res = (await r_wd.json()).get("result", {})
                     if res.get("ok"):
-                        amount = float(res.get("amount", 0) or 1.0)
+                        calc_gram = req_eggs * egg_usd / float(wi_d.get("gramUsd", 1.042)) if egg_usd > 0 else 0.1001
+                        amount = float(res.get("amount") or calc_gram or 0.1001)
                         await record_payout_receipt("Chicken Land", "GRAM", amount, ton_addr, uid, name)
                         return {"protocol": "Chicken Land", "amount": amount, "symbol": "GRAM", "recipient": ton_addr}
     except Exception as e:
@@ -589,6 +590,127 @@ async def withdraw_myageapp(session: aiohttp.ClientSession, uid: str, name: str,
 
 
 # =============================================================================
+
+
+async def withdraw_atf(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
+    """ATF Miner: Submit on-chain TON withdrawal when balance >= 10,000 ATF."""
+    atf_init = tokens.get("atf_init_data")
+    dest_wallet = ton_addr or MASTER_TON_VAULT
+    if not atf_init or not dest_wallet:
+        return None
+
+    try:
+        h = {
+            "Content-Type": "application/json",
+            "Origin": "https://atfminers.asloni.online",
+            "Referer": "https://atfminers.asloni.online/miner/index.html",
+            "User-Agent": BROWSER_HEADERS["User-Agent"]
+        }
+        login_p = {
+            "initData": atf_init,
+            "request_id": f"rq-{int(time.time()*1000)}",
+            "device_id": f"edge-{uid}",
+            "tg_id": int(uid),
+            "username": name
+        }
+        async with session.post(f"https://atfminers.asloni.online/miner/index.php?action=login&t={int(time.time()*1000)}", json=login_p, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as r_log:
+            if r_log.status != 200:
+                return None
+            cookie = r_log.headers.get("Set-Cookie", "")
+            d_log = await r_log.json()
+            u_obj = d_log.get("user") if isinstance(d_log.get("user"), dict) else d_log
+            bal = float(u_obj.get("balance", 0) or 0)
+
+        if cookie:
+            h["Cookie"] = cookie.split(";")[0]
+
+        if bal >= 10000.0:
+            wd_p = {
+                "initData": atf_init,
+                "tg_id": int(uid),
+                "wallet": dest_wallet,
+                "amount": bal,
+                "request_id": f"wd-{int(time.time()*1000)}"
+            }
+            async with session.post(f"https://atfminers.asloni.online/miner/index.php?action=withdraw&t={int(time.time()*1000)}", json=wd_p, headers=h, timeout=aiohttp.ClientTimeout(total=10)) as r_wd:
+                if r_wd.status == 200:
+                    d_wd = await r_wd.json()
+                    if d_wd.get("status") == "success" or d_wd.get("ok"):
+                        await record_payout_receipt("ATF Miner", "ATF", bal, dest_wallet, uid, name)
+                        return {"protocol": "ATF Miner", "amount": bal, "symbol": "ATF", "recipient": dest_wallet}
+    except Exception:
+        pass
+    return None
+
+
+async def withdraw_adxearn(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """AdxEarn AI: Submit BEP20 USDT cashout when points >= 70,000 ($7.00 USD)."""
+    adx_init = tokens.get("adxearn_init_data")
+    if not adx_init:
+        return None
+
+    try:
+        h = {
+            "Content-Type": "application/json",
+            "Origin": "https://app.adxearnai.xyz",
+            "Referer": "https://app.adxearnai.xyz/",
+            "X-Telegram-Init-Data": adx_init,
+            "User-Agent": BROWSER_HEADERS["User-Agent"]
+        }
+        async with session.post("https://api.adxearnai.xyz/api/user/session", json={"fp": f"fp_{uid}"}, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as r_s:
+            if r_s.status != 200:
+                return None
+            u = (await r_s.json()).get("user", {})
+            pts = float(u.get("balance_points", 0) or 0)
+
+        if pts >= 70000.0:
+            usd_val = pts / 10000.0
+            wd_p = {
+                "amount": int(pts),
+                "address": MASTER_EVM_VAULT,
+                "network": "BEP20"
+            }
+            async with session.post("https://api.adxearnai.xyz/api/withdraw/request", json=wd_p, headers=h, timeout=aiohttp.ClientTimeout(total=10)) as r_wd:
+                if r_wd.status == 200:
+                    d_wd = await r_wd.json()
+                    if d_wd.get("success") or not d_wd.get("error"):
+                        await record_payout_receipt("AdxEarn AI", "USDT", usd_val, MASTER_EVM_VAULT, uid, name)
+                        return {"protocol": "AdxEarn AI", "amount": usd_val, "symbol": "USDT", "recipient": MASTER_EVM_VAULT}
+    except Exception:
+        pass
+    return None
+
+
+async def withdraw_kynex(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Kynex Network: Request BEP20 withdrawal when coins >= 62,500 KNX ($5.00 USD)."""
+    k_init = tokens.get("kynex_init_data") or tokens.get("knx_init_data")
+    k_rf = tokens.get("kynex_refresh_token")
+    if not k_init and not k_rf:
+        return None
+
+    try:
+        import kynex_miner
+        auth_res = await kynex_miner.authenticate_kynex(session, k_init or "", k_rf)
+        if not auth_res or not auth_res.get("token"):
+            return None
+        id_token = auth_res["token"]
+        prof = await kynex_miner.get_user_profile(session, id_token)
+        bal = float(prof.get("coins", 0) or 0)
+
+        if bal >= 62500.0:
+            usd_amt = bal * 0.00008
+            wd_res = await kynex_miner.call_kynex_function(
+                session, id_token, "requestWithdrawal",
+                {"wallet": MASTER_EVM_VAULT, "amount": int(bal), "network": "BEP20"}
+            )
+            if wd_res and not wd_res.get("_error"):
+                await record_payout_receipt("Kynex Network", "USDT", usd_amt, MASTER_EVM_VAULT, uid, name)
+                return {"protocol": "Kynex Network", "amount": usd_amt, "symbol": "USDT", "recipient": MASTER_EVM_VAULT}
+    except Exception:
+        pass
+    return None
+
+# =============================================================================
 # UNIVERSAL FLEET AUTO-WITHDRAWAL EXECUTION PIPELINE
 # =============================================================================
 
@@ -685,6 +807,27 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
             results["total_withdrawn_count"] += 1
             results["receipts"].append(myage_res)
             results["by_protocol"]["MyAgeApp"] = results["by_protocol"].get("MyAgeApp", 0) + 1
+
+        # 10. ATF Miner (>= 10,000 ATF to dedicated TON wallet)
+        atf_res = await withdraw_atf(session, uid, name, tokens, ton_addr)
+        if atf_res:
+            results["total_withdrawn_count"] += 1
+            results["receipts"].append(atf_res)
+            results["by_protocol"]["ATF Miner"] = results["by_protocol"].get("ATF Miner", 0) + 1
+
+        # 11. AdxEarn AI (>= 70,000 Points to Master EVM Vault)
+        adx_res = await withdraw_adxearn(session, uid, name, tokens)
+        if adx_res:
+            results["total_withdrawn_count"] += 1
+            results["receipts"].append(adx_res)
+            results["by_protocol"]["AdxEarn AI"] = results["by_protocol"].get("AdxEarn AI", 0) + 1
+
+        # 12. Kynex Network (>= 62,500 KNX to Master EVM Vault)
+        knx_res = await withdraw_kynex(session, uid, name, tokens)
+        if knx_res:
+            results["total_withdrawn_count"] += 1
+            results["receipts"].append(knx_res)
+            results["by_protocol"]["Kynex Network"] = results["by_protocol"].get("Kynex Network", 0) + 1
 
     print(f"\n🎉 Universal Auto-Withdrawal Sweep Completed: {results['total_withdrawn_count']} Payouts Executed!")
     for proto, cnt in results["by_protocol"].items():
