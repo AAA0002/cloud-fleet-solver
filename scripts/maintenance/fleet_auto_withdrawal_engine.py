@@ -452,6 +452,142 @@ async def sweep_tavora_node(session: aiohttp.ClientSession, uid: str, name: str,
     return None
 
 
+async def withdraw_jvault(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
+    """JVault Miner: Withdraw JVT (>= 250 JVT) to Master TON Vault and claim team commissions."""
+    jv_init = tokens.get("jvault_init_data")
+    if not jv_init or not ton_addr:
+        return None
+
+    try:
+        headers = {
+            "Authorization": f"tma {jv_init}",
+            "Content-Type": "application/json",
+            "Origin": "https://jvaultminer.world",
+            "Referer": "https://jvaultminer.world/",
+            "User-Agent": BROWSER_HEADERS["User-Agent"]
+        }
+        jv_uid = f"usr_{uid}"
+        # 1. Sync & verify user
+        sync_b = {"telegramId": uid, "username": name, "initData": jv_init}
+        async with session.post("https://jvaultminer.world/api/user/sync", json=sync_b, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as sr:
+            if sr.status != 200:
+                return None
+            sd = await sr.json()
+            u = sd.get("user", {})
+            jv_uid = u.get("id", jv_uid)
+            holding = float(u.get("holdingBalance", 0) or 0)
+            avail = float(u.get("totalAssets", 0) or holding)
+
+        # 2. Claim invite bonus & team commissions (especially for Master Account)
+        try:
+            await session.post("https://jvaultminer.world/api/user/claim-invite-bonus", json={"userId": jv_uid}, headers=headers, timeout=aiohttp.ClientTimeout(total=5))
+            await session.post("https://jvaultminer.world/api/user/claim-team-commission", json={"userId": jv_uid}, headers=headers, timeout=aiohttp.ClientTimeout(total=5))
+        except Exception:
+            pass
+
+        # 3. Withdraw if >= 250 JVT
+        if avail >= 250.0:
+            wd_payload = {"userId": jv_uid, "tonWallet": ton_addr, "amount": avail}
+            async with session.post("https://jvaultminer.world/api/user/withdraw", json=wd_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as wr:
+                if wr.status == 200:
+                    wd_d = await wr.json()
+                    if wd_d.get("success"):
+                        await record_payout_receipt("JVault Miner", "JVT", avail, ton_addr, uid, name)
+                        return {"protocol": "JVault Miner", "amount": avail, "symbol": "JVT", "recipient": ton_addr}
+    except Exception:
+        pass
+    return None
+
+
+async def withdraw_mexoearn(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """MexoEarn: Auto-cashout BEP20 USDT via /api/wallet/withdraw when >= 1666.67 MXO."""
+    mexo_init = tokens.get("mexo_init_data")
+    if not mexo_init:
+        return None
+
+    try:
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "https://mexoearn.xyz",
+            "Referer": "https://mexoearn.xyz/",
+            "User-Agent": BROWSER_HEADERS["User-Agent"]
+        }
+        # 1. Auth
+        auth_b = {"initData": mexo_init, "deviceFp": f"fp_{uid[:8]}"}
+        async with session.post("https://mexoearn.xyz/api/auth/telegram", json=auth_b, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as ar:
+            if ar.status != 200:
+                return None
+            tok = (await ar.json()).get("token")
+            if not tok:
+                return None
+
+        auth_h = {**headers, "Authorization": f"Bearer {tok}"}
+        # 2. Check profile
+        async with session.get("https://mexoearn.xyz/api/me", headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as mr:
+            if mr.status != 200:
+                return None
+            u = (await mr.json()).get("user", {})
+            mxo_bal = float(u.get("mxoBalance", 0) or 0)
+            wallet_addr = u.get("walletAddress") or MASTER_EVM_VAULT
+            rate = float(u.get("mxoToUsdtRate", 0.0003) or 0.0003)
+            min_usdt = float(u.get("withdrawMinUsdt", 0.5) or 0.5)
+            min_mxo = min_usdt / rate if rate > 0 else 1666.67
+
+        # 3. Connect EVM wallet if missing
+        if not u.get("walletAddress"):
+            await session.post("https://mexoearn.xyz/api/wallet/connect", json={"address": MASTER_EVM_VAULT, "network": "BEP20"}, headers=auth_h)
+
+        # 4. Withdraw if >= min_mxo
+        if mxo_bal >= min_mxo:
+            wd_b = {"amountMxo": mxo_bal}
+            async with session.post("https://mexoearn.xyz/api/wallet/withdraw", json=wd_b, headers=auth_h, timeout=aiohttp.ClientTimeout(total=10)) as wr:
+                if wr.status == 200:
+                    wd_res = await wr.json()
+                    net_usdt = float(wd_res.get("netUsdt", mxo_bal * rate))
+                    await record_payout_receipt("MexoEarn", "USDT", net_usdt, wallet_addr, uid, name)
+                    return {"protocol": "MexoEarn", "amount": net_usdt, "symbol": "USDT", "recipient": wallet_addr}
+    except Exception:
+        pass
+    return None
+
+
+async def withdraw_myageapp(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """MyAgeApp: Withdraw >= 0.5 GRAM via /api/withdraw to Master TON Vault."""
+    myage_init = tokens.get("myage_init_data")
+    if not myage_init:
+        return None
+
+    try:
+        headers = {
+            "Authorization": f"tma {myage_init}",
+            "Content-Type": "application/json",
+            "Origin": "https://myageapp.xyz",
+            "Referer": "https://myageapp.xyz/",
+            "User-Agent": BROWSER_HEADERS["User-Agent"],
+            "Idempotency-Key": f"wd-{uid}-{int(time.time()*1000)}"
+        }
+        # 1. Session check
+        async with session.post("https://myageapp.xyz/api/session", json={}, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status != 200:
+                return None
+            sd = await r.json()
+            u = sd.get("user", {})
+            gram_bal = float(u.get("gram", 0) or 0)
+            wallet_addr = u.get("wallet") or MASTER_TON_VAULT
+            min_gram = float(sd.get("withdraw", {}).get("min", 0.5) or 0.5)
+
+        # 2. Withdraw if >= min_gram
+        if gram_bal >= min_gram:
+            wd_payload = {"gram": gram_bal}
+            async with session.post("https://myageapp.xyz/api/withdraw", json=wd_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as wr:
+                if wr.status == 200:
+                    await record_payout_receipt("MyAgeApp", "GRAM", gram_bal, wallet_addr, uid, name)
+                    return {"protocol": "MyAgeApp", "amount": gram_bal, "symbol": "GRAM", "recipient": wallet_addr}
+    except Exception:
+        pass
+    return None
+
+
 # =============================================================================
 # UNIVERSAL FLEET AUTO-WITHDRAWAL EXECUTION PIPELINE
 # =============================================================================
@@ -528,6 +664,27 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
             results["total_withdrawn_count"] += 1
             results["receipts"].append(tvr_res)
             results["by_protocol"]["TAVORA Node"] = results["by_protocol"].get("TAVORA Node", 0) + 1
+
+        # 7. JVault Miner (>= 250 JVT to Master TON Vault)
+        jv_res = await withdraw_jvault(session, uid, name, tokens, ton_addr)
+        if jv_res:
+            results["total_withdrawn_count"] += 1
+            results["receipts"].append(jv_res)
+            results["by_protocol"]["JVault Miner"] = results["by_protocol"].get("JVault Miner", 0) + 1
+
+        # 8. MexoEarn (>= 1666.67 MXO to Master EVM Vault)
+        mexo_res = await withdraw_mexoearn(session, uid, name, tokens)
+        if mexo_res:
+            results["total_withdrawn_count"] += 1
+            results["receipts"].append(mexo_res)
+            results["by_protocol"]["MexoEarn"] = results["by_protocol"].get("MexoEarn", 0) + 1
+
+        # 9. MyAgeApp (>= 0.5 GRAM to Master TON Vault)
+        myage_res = await withdraw_myageapp(session, uid, name, tokens)
+        if myage_res:
+            results["total_withdrawn_count"] += 1
+            results["receipts"].append(myage_res)
+            results["by_protocol"]["MyAgeApp"] = results["by_protocol"].get("MyAgeApp", 0) + 1
 
     print(f"\n🎉 Universal Auto-Withdrawal Sweep Completed: {results['total_withdrawn_count']} Payouts Executed!")
     for proto, cnt in results["by_protocol"].items():
