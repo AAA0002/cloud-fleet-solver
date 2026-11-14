@@ -11,12 +11,14 @@ all dynamic accounts in the fleet for all 12 legitimate bots:
   2. Kynex Network (@Kynex_miningbot)
   3. PepeGram (@Pepe_gram_bot)
   4. AdxEarn AI (@AdxEarnAibot)
-  5. DiggoMiner (@Diggominer_bot)
-  6. Chicken Land (@ChickenLandBot)
-  7. EarnVault (@EarnVaultApp_bot)
-  8. MexoEarn (@MexoEarni_bot)
-  9. MyAgeApp (@MyAgeApp)
-  10. Lifetime Energy (@lifetime_energy_bot)
+  5. Chicken Land (@ChickenLandBot)
+  6. EarnVault (@EarnVaultApp_bot)
+  7. MexoEarn (@MexoEarni_bot)
+  8. MyAgeApp (@MyAgeApp)
+  9. Lifetime Energy (@lifetime_energy_bot)
+  10. JVault Miner (@JVaultMinerBot)
+  11. TAVORA Node (@TavoraNode_Bot)
+  12. Victor's Company (@Victors_Company_bot)
 
 Zero Phone Load (Rule 4): Runs once as a clean batch script in cloud/container,
 exits cleanly, and persists updated tokens to Upstash Redis and Cloudflare Edge.
