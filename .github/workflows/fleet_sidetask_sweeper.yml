@@ -3,12 +3,14 @@ name: "Autonomous Fleet Side-Task & Mining Sweeper"
 on:
   workflow_dispatch:
   schedule:
+    # Run every 2 hours continuously in the cloud
     - cron: "0 */2 * * *"
 
 jobs:
   sweep_fleet_sidetasks:
+    name: "Autonomous 12-Bot Fleet Sweeper & Withdrawal Sentinel"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout Repository
@@ -25,7 +27,17 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Execute 12-Bot Fleet Side-Task & Mining Sweep
+      - name: 1. Verify & Auto-Heal Token Freshness (Pre-Flight)
+        env:
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
+          SECRET_KEY: "${{ secrets.SECRET_KEY }}"
+        run: |
+          python scripts/maintenance/token_expiration_watchdog.py
+
+      - name: 2. Execute 12-Bot Fleet Side-Task & Mining Sweep
         env:
           UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
           UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
@@ -33,3 +45,16 @@ jobs:
           OWNER_ID: "${{ secrets.OWNER_ID || '6727787768' }}"
         run: |
           python finish_all_fleet_sidetasks.py
+
+      - name: 3. Audit Fleet Withdrawal Readiness & Payouts (Post-Flight)
+        env:
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
+        run: |
+          python scripts/maintenance/audit_withdrawal_readiness.py
+
+      - name: 4. Verify Zero-Secret Hygiene
+        run: |
+          python scripts/maintenance/scan_secrets.py
