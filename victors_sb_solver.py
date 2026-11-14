@@ -355,23 +355,8 @@ def probe_account(uid: int, v_init: str) -> tuple:
         if code == 200 and isinstance(body, dict) and body.get("success") is True:
             return "ALREADY_AUTH", existing_hp
 
-    code, body = safe_post(
-        f"{VICTORS_API}/auth/login",
-        {"startParam": VICTORS_REF},
-        extra_headers={"Authorization": f"tma {v_init}"}
-    )
-    if code in (401, 403) and isinstance(body, dict) and (body.get("code") == "HUMAN_REQUIRED" or "human" in str(body).lower()):
-        return "HUMAN_REQUIRED", None
-    elif code in (200, 201) and isinstance(body, dict):
-        hp = body.get("humanPass") or (body.get("data", {}).get("humanPass") if isinstance(body.get("data"), dict) else None)
-        if hp:
-            return "ALREADY_AUTH", hp
-    elif code == 401:
-        if isinstance(body, dict) and ("expired" in str(body.get("error", "")).lower() or body.get("code") == "SESSION_EXPIRED"):
-            return "EXPIRED", body
-        return "HUMAN_REQUIRED", None
-
-    return "UNKNOWN", body
+    # Session requires Turnstile verification: delegate directly to SeleniumBase UC solver
+    return "HUMAN_REQUIRED", None
 
 
 def run_pipeline_for_account(uid: int, v_init: str, human_pass: str, is_master: bool, ton_wallets: dict):
