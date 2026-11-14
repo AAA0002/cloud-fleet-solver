@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+.env
+.env.*
+*.session
+*.session-journal
+accounts.json
+fleet_miniapp_tokens.json
+fleet_ton_wallets.json
+downloaded_files/
+archived_files/
+latest_logs/
+.pytest_cache/
