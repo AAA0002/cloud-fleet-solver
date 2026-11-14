@@ -7,8 +7,8 @@ on:
         description: "Target UID or 'all' for full fleet"
         required: false
         default: "all"
-  schedule:
-    - cron: "0 */6 * * *"
+  # schedule:
+  #   - cron: "0 */6 * * *"
 
 jobs:
   solve_and_qualify_victors:
