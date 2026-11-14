@@ -346,6 +346,15 @@ def create_victors_ton_proof(wallet_entry: dict, nonce: str) -> tuple:
 
 def probe_account(uid: int, v_init: str) -> tuple:
     """Rapid health probe to check session validity."""
+    # 1. Pre-flight check: Telegram WebApp auth_date lifetime (< 2 hours)
+    try:
+        params = urllib.parse.parse_qs(v_init)
+        ad = params.get("auth_date", [None])[0]
+        if ad and (time.time() - int(ad)) > 7200:
+            return "EXPIRED", None
+    except Exception:
+        pass
+
     existing_hp = get_victors_pass_from_upstash(uid)
     if existing_hp:
         code, body = safe_get(
