@@ -25,7 +25,9 @@ logger = logging.getLogger("victors_arcade")
 
 VICTORS_API = "https://server.victors.company/api"
 VICTORS_ORIGIN = "https://app.victors.company"
-MIN_BALANCE_TO_PLAY = 50.0  # Only enter new expeditions if balance >= 50 VIC
+MASTER_UID = "6727787768"
+ENABLE_NEW_PAID_EXPEDITIONS = False  # Strict Profit Guard: Disabled paid expeditions (25 VIC Shovel) to preserve 100% capital
+MIN_BALANCE_TO_PLAY = 100.0  # Only enter new expeditions if explicitly enabled and balance >= 100 VIC
 
 
 async def solve_deep_mine_expeditions(
@@ -40,6 +42,11 @@ async def solve_deep_mine_expeditions(
     Returns summary of games played and balance changes.
     """
     stats = {"runs_played": 0, "net_vic": 0.0, "total_paid": 0.0, "final_balance": None}
+
+    # 0. STRICT MASTER ACCOUNT GUARD: Never play minigames or spend coins on Master Account
+    if str(MASTER_UID) in str(account_name) or "Arif Hossain" in str(account_name):
+        logger.info(f"[{account_name}] 👑 Master Account detected: Skipping Deep Mine minigame. Preserving 100% capital for treasury.")
+        return stats
 
     # 1. Fetch current user state & balance
     try:
@@ -75,6 +82,9 @@ async def solve_deep_mine_expeditions(
 
         # Check eligibility
         if not active_run:
+            if not ENABLE_NEW_PAID_EXPEDITIONS:
+                logger.info(f"[{account_name}] 🛡️ Profit Guard: New paid expeditions disabled (25 VIC Shovel is negative EV). Preserving 100% balance.")
+                break
             if plays_left <= 0:
                 logger.info(f"[{account_name}] 🎮 Deep Mine: No plays left today ({plays_left}/10).")
                 break

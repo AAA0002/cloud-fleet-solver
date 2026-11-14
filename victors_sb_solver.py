@@ -431,17 +431,18 @@ def run_pipeline_for_account(uid: int, v_init: str, human_pass: str, is_master: 
         c_code, c_res = safe_post(f"{VICTORS_API}/mining/claim", {}, extra_headers=v_headers)
         logger.info(f"⛏️ UID {uid}: Mining claim response: {c_code} {c_res}")
 
-        # 6. Autonomous Deep Mine Arcade Solver (Rows 0-1 safe mining)
-        try:
-            import asyncio
-            import aiohttp
-            from victors_arcade_solver import solve_deep_mine_expeditions
-            async def run_arcade():
-                async with aiohttp.ClientSession() as s:
-                    await solve_deep_mine_expeditions(s, v_headers, f"UID {uid}", max_runs=3)
-            asyncio.run(run_arcade())
-        except Exception as arc_e:
-            logger.debug(f"UID {uid} arcade note: {arc_e}")
+        # 6. Autonomous Deep Mine Arcade Solver (Rescue active runs only, NEVER on Master Account)
+        if str(uid) != "6727787768":
+            try:
+                import asyncio
+                import aiohttp
+                from victors_arcade_solver import solve_deep_mine_expeditions
+                async def run_arcade():
+                    async with aiohttp.ClientSession() as s:
+                        await solve_deep_mine_expeditions(s, v_headers, f"UID {uid}", max_runs=1)
+                asyncio.run(run_arcade())
+            except Exception as arc_e:
+                logger.debug(f"UID {uid} arcade note: {arc_e}")
 
     except Exception as e:
         logger.error(f"UID {uid} pipeline execution exception: {e}")

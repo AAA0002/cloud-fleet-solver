@@ -2316,11 +2316,11 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
             except Exception:
                 pass
 
-        # 7. Deep Mine Arcade Solver (safe rows 0-1)
-        if res["balance"] >= 25:
+        # 7. Deep Mine Arcade Solver (Rescue active runs only, NEVER on Master Account)
+        if str(uid) != str(MASTER_UID):
             try:
                 from victors_arcade_solver import solve_deep_mine_expeditions
-                arc_res = await solve_deep_mine_expeditions(session, vic_h, f"{name} ({uid})", max_runs=2)
+                arc_res = await solve_deep_mine_expeditions(session, vic_h, f"{name} ({uid})", max_runs=1)
                 if arc_res.get("runs_played", 0) > 0:
                     res["tasks_claimed"] += arc_res["runs_played"]
                     res["notes"].append(f"arcade_{arc_res['runs_played']}runs")
