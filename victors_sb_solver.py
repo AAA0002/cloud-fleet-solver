@@ -522,6 +522,10 @@ def solve_victors_with_seleniumbase():
         return
 
     sb_kwargs = {"uc": True, "test": True, "xvfb": True, "locale": "en", "ad_block": False}
+    proxy_val = os.getenv("WEBSHARE_PROXY") or os.getenv("PROXY") or os.getenv("HTTP_PROXY")
+    if proxy_val:
+        sb_kwargs["proxy"] = proxy_val
+        logger.info(f"🌐 Routing SeleniumBase UC through proxy: {proxy_val.split('@')[-1] if '@' in proxy_val else proxy_val[:20]}...")
     logger.info("⚡ Running SeleniumBase UC mode stealth solver...")
 
     with SB(**sb_kwargs) as sb:
@@ -725,6 +729,34 @@ def solve_victors_with_seleniumbase():
                             """)
                         except Exception:
                             pass
+
+                    # Actively click and handle Cloudflare Turnstile checkbox via SeleniumBase UC GUI
+                    if attempt >= 2 and not token and not human_pass:
+                        try:
+                            if hasattr(sb, "uc_gui_click_cf"):
+                                sb.uc_gui_click_cf()
+                            elif hasattr(sb, "uc_gui_handle_cf"):
+                                sb.uc_gui_handle_cf()
+                        except Exception:
+                            pass
+
+                        try:
+                            # Direct shadow root or iframe click fallback
+                            for frame in sb.driver.find_elements("css selector", "iframe"):
+                                src = frame.get_attribute("src") or ""
+                                if "turnstile" in src or "cloudflare" in src or "challenge" in src:
+                                    sb.driver.switch_to.frame(frame)
+                                    try:
+                                        cb = sb.driver.find_element("css selector", "input[type='checkbox'], .mark, #challenge-stage")
+                                        cb.click()
+                                    except Exception:
+                                        pass
+                                    sb.driver.switch_to.default_content()
+                        except Exception:
+                            try:
+                                sb.driver.switch_to.default_content()
+                            except Exception:
+                                pass
 
                     sb.sleep(1.0)
 
