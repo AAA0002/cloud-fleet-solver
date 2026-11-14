@@ -1,0 +1,27 @@
+# .gitleaks.toml
+# Gitleaks Configuration for AAA AUTO Fleet
+title = "AAA AUTO Fleet Secret Detection Configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist for legitimate public client tokens, documentation examples, and ignored local vaults"
+paths = [
+    '''^\.env.*''',
+    '''^backups/''',
+    '''^FLEET_WALLETS_SECRETS_MASTER_VAULT\.txt''',
+    '''^USER_BOT_FLEET_SECRETS_VAULT\.json''',
+    '''^ARCHIVED_ACCOUNT_10_OLD_WALLETS\.json''',
+    '''^.*\.session$''',
+    '''^.*\.session-journal$'''
+]
+regexes = [
+    # EarnVault Public MiniApp Firebase Web API Key (Public Client Identifier for eearnvault.top)
+    '''AIzaSyCP9yYj_KSQxv0lW0EoqR39_QTO2SGJGEg''',
+    # Documentation Placeholders
+    '''816\.\.\.:AAE\.\.\.''',
+    '''ghp_\.\.\.''',
+    '''0000000000:AA[A-Za-z0-9_-]{33}''',
+    '''1234567890:AA[A-Za-z0-9_-]{33}'''
+]
