@@ -31,6 +31,7 @@ import math
 import random
 import base64
 import uuid
+import urllib.parse
 import argparse
 import asyncio
 import aiohttp
@@ -38,6 +39,8 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"))

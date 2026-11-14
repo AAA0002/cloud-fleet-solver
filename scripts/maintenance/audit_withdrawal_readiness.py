@@ -34,12 +34,15 @@ import math
 import time
 import base64
 import random
+import urllib.parse
 import argparse
 import asyncio
 import aiohttp
 from typing import Dict, List, Any, Tuple
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"))
@@ -212,7 +215,8 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
                     d = (await resp.json()).get("result", {})
                     egg_bal = d.get("user", {}).get("eggBal", 0)
                     egg_usd = float(d.get("eggUsd", 0.0000069444))
-                    balance_gram = (egg_bal * egg_usd) / float(d.get("price", 1.042))
+                    ch_price = float(d.get("price") or 1.042)
+                    balance_gram = (egg_bal * egg_usd) / ch_price if ch_price > 0 else 0.0
                     threshold = WITHDRAWAL_THRESHOLDS["chickenland"]["threshold"]
                     is_ready = balance_gram >= threshold and d.get("usedToday", 0) == 0
                     report["protocols"]["chickenland"] = {
