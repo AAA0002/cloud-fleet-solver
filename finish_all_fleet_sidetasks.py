@@ -406,14 +406,21 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                 ACCOUNTS.append({"user_id": int(duid), "account_id": duid, "name": name})
                 existing_uids.add(duid)
 
-    # 3. Merge individual fleet:tokens:{uid} from Upstash
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        for uid in discovered_uids:
-            try:
-                async with session.get(f"{UPSTASH_URL}/get/fleet:tokens:{uid}", headers=up_h, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                    if r.status == 200:
-                        d = await r.json()
-                        raw = d.get("result")
+    # 3. Merge individual fleet:tokens:{uid} from Upstash via high-speed pipeline (with parallel gather fallback)
+    if UPSTASH_URL and UPSTASH_TOKEN and discovered_uids:
+        try:
+            pipeline_cmds = [["GET", f"fleet:tokens:{uid}"] for uid in discovered_uids if uid != "8881914294"]
+            async with session.post(
+                f"{UPSTASH_URL}/pipeline",
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
+                json=pipeline_cmds,
+                timeout=aiohttp.ClientTimeout(total=8)
+            ) as pr:
+                if pr.status == 200:
+                    p_res = await pr.json()
+                    for cmd, item in zip(pipeline_cmds, p_res):
+                        uid = cmd[1].split(":")[-1]
+                        raw = item.get("result")
                         if raw:
                             parsed = json.loads(raw) if isinstance(raw, str) else raw
                             while isinstance(parsed, str):
@@ -427,8 +434,35 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                                             existing[tk] = tv
                                         elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(existing.get(tk)):
                                             existing[tk] = tv
-            except Exception:
-                pass
+        except Exception as pe:
+            logger.warning(f"Upstash pipeline token fetch fallback to parallel gather: {pe}")
+            async def fetch_one(uid):
+                try:
+                    async with session.get(f"{UPSTASH_URL}/get/fleet:tokens:{uid}", headers=up_h, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                        if r.status == 200:
+                            d = await r.json()
+                            raw = d.get("result")
+                            if raw:
+                                parsed = json.loads(raw) if isinstance(raw, str) else raw
+                                while isinstance(parsed, str):
+                                    try: parsed = json.loads(parsed)
+                                    except Exception: break
+                                if isinstance(parsed, dict):
+                                    return uid, parsed
+                except Exception:
+                    pass
+                return uid, None
+
+            gather_res = await asyncio.gather(*[fetch_one(uid) for uid in discovered_uids if uid != "8881914294"])
+            for uid, parsed in gather_res:
+                if parsed and isinstance(parsed, dict):
+                    existing = tokens_db.setdefault(uid, {})
+                    for tk, tv in parsed.items():
+                        if tv:
+                            if tk not in existing:
+                                existing[tk] = tv
+                            elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(existing.get(tk)):
+                                existing[tk] = tv
 
     # 3. Local High-Speed Cache (fleet_miniapp_tokens.json)
     local_f = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
