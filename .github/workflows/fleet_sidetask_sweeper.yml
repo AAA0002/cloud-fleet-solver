@@ -1,0 +1,35 @@
+name: "Autonomous Fleet Side-Task & Mining Sweeper"
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */2 * * *"
+
+jobs:
+  sweep_fleet_sidetasks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Execute 12-Bot Fleet Side-Task & Mining Sweep
+        env:
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
+          ALERT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          OWNER_ID: "${{ secrets.OWNER_ID || '6727787768' }}"
+        run: |
+          python finish_all_fleet_sidetasks.py

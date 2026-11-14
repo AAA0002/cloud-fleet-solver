@@ -2154,6 +2154,149 @@ async def sweep_tavora_tasks(session: aiohttp.ClientSession, uid: str, name: str
     return res
 
 
+async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: str, vic_init: str, acc: dict) -> Dict[str, Any]:
+    res = {"bot": "Victor's Company", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0, "level": 1}
+    if not vic_init:
+        res["notes"].append("missing_init_data")
+        return res
+
+    # 1. Retrieve humanPass from Upstash or acc dict
+    hp = acc.get("victors_pass") or acc.get("victors_human_pass")
+    if not hp and UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            async with session.get(
+                f"{UPSTASH_URL}/get/victors:pass:{uid}",
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as pr:
+                if pr.status == 200:
+                    pd = await pr.json()
+                    r_val = pd.get("result")
+                    if r_val:
+                        if isinstance(r_val, str) and "{" in r_val:
+                            try:
+                                hp = json.loads(r_val).get("humanPass")
+                            except Exception:
+                                hp = r_val
+                        else:
+                            hp = r_val
+        except Exception:
+            pass
+
+    vic_h = {
+        "User-Agent": acc.get("user_agent") or "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Mobile",
+        "Content-Type": "application/json",
+        "Authorization": f"tma {vic_init}",
+        "Origin": "https://app.victors.company",
+        "Referer": "https://app.victors.company/"
+    }
+    if hp:
+        if isinstance(hp, str) and hp.strip().startswith("{"):
+            try:
+                p_hp = json.loads(hp)
+                if isinstance(p_hp, dict) and p_hp.get("humanPass"):
+                    hp = p_hp.get("humanPass")
+            except Exception:
+                pass
+        vic_h["x-human-pass"] = str(hp)
+
+    try:
+        # Check /me
+        async with session.get("https://server.victors.company/api/me", headers=vic_h, timeout=aiohttp.ClientTimeout(total=8)) as mr:
+            if mr.status != 200:
+                if mr.status in (401, 403):
+                    res["notes"].append("turnstile_required")
+                else:
+                    res["notes"].append(f"http_{mr.status}")
+                return res
+            md = await mr.json()
+            user = md.get("user") or md.get("state", {}).get("user") or {}
+            res["balance"] = float(user.get("inAppBalance", 0) or user.get("coins", 0) or 0)
+            res["level"] = int(user.get("peakLevel", 1) or 1)
+
+        # 1. Tutorial
+        try:
+            await session.post("https://server.victors.company/api/me/tutorial", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5))
+        except Exception:
+            pass
+
+        # 2. Check-in
+        try:
+            async with session.post("https://server.victors.company/api/checkin", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5)) as cr:
+                if cr.status == 200:
+                    cd = await cr.json()
+                    if cd.get("success"):
+                        res["tasks_claimed"] += 1
+                        res["notes"].append("daily_checkin")
+        except Exception:
+            pass
+
+        # 3. Shift Mining Claim
+        try:
+            async with session.post("https://server.victors.company/api/mining/claim", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5)) as mmr:
+                if mmr.status == 200:
+                    mmd = await mmr.json()
+                    if mmd.get("success"):
+                        res["tasks_claimed"] += 1
+                        res["notes"].append("mining_claimed")
+        except Exception:
+            pass
+
+        # 4. Adsgram task claim
+        try:
+            async with session.post("https://server.victors.company/api/ad-task/claim", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5)) as ar:
+                if ar.status == 200:
+                    ad = await ar.json()
+                    if ad.get("success"):
+                        res["tasks_claimed"] += 1
+                        res["notes"].append("ad_task_claimed")
+        except Exception:
+            pass
+
+        # 5. Dynamic Task Discovery & Claims
+        try:
+            async with session.get("https://server.victors.company/api/tasks", headers=vic_h, timeout=aiohttp.ClientTimeout(total=5)) as tr:
+                if tr.status == 200:
+                    td = await tr.json()
+                    for t in td.get("tasks", []):
+                        if t.get("status") == "open":
+                            tid = t.get("taskId") or t.get("id")
+                            if tid:
+                                await asyncio.sleep(0.3)
+                                async with session.post("https://server.victors.company/api/tasks/claim", headers=vic_h, json={"taskId": tid}, timeout=aiohttp.ClientTimeout(total=5)) as clm_r:
+                                    if clm_r.status in (200, 201):
+                                        c_data = await clm_r.json()
+                                        if c_data.get("success"):
+                                            res["tasks_claimed"] += 1
+                                            res["notes"].append(f"task_{tid}")
+        except Exception:
+            pass
+
+        # 6. Master Bonuses (if Owner)
+        if str(uid) == str(MASTER_UID):
+            try:
+                await session.post("https://server.victors.company/api/referral/claim-bonus", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5))
+                await session.post("https://server.victors.company/api/referral/claim-commission", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5))
+            except Exception:
+                pass
+
+        # 7. Deep Mine Arcade Solver (safe rows 0-1)
+        if res["balance"] >= 25:
+            try:
+                from victors_arcade_solver import solve_deep_mine_expeditions
+                arc_res = await solve_deep_mine_expeditions(session, vic_h, f"{name} ({uid})", max_runs=2)
+                if arc_res.get("runs_played", 0) > 0:
+                    res["tasks_claimed"] += arc_res["runs_played"]
+                    res["notes"].append(f"arcade_{arc_res['runs_played']}runs")
+            except Exception:
+                pass
+
+        res["success"] = True
+    except Exception as e:
+        res["notes"].append(f"err: {str(e)[:40]}")
+    return res
+
+
 # =============================================================================
 # 3. MAIN RUNNER (23-ACCOUNT PARALLEL PIPELINE)
 # =============================================================================
@@ -2236,6 +2379,11 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         tav_tok = merged_toks.get("tavora_token") or merged_toks.get("tavora_init_data", "")
         tav_res = await sweep_tavora_tasks(session, uid, name, tav_tok, merged_toks)
         account_report["results"]["tavora"] = tav_res
+
+        # 12. Victor's Company
+        vic_init = merged_toks.get("victors_init_data") or merged_toks.get("victors_company_init_data", "")
+        vic_res = await sweep_victors_tasks(session, uid, name, vic_init, merged_toks)
+        account_report["results"]["victors"] = vic_res
 
         # Sync tokens to Cloudflare Workers if newly refreshed
         await sync_token_to_cf(session, uid, merged_toks)

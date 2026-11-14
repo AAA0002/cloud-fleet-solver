@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
 victors_arcade_solver.py
-Autonomous Solver for Victor's Company (@VictorsCompanybot) Deep Mine Arcade Minigame (/api/arcade/mine/*).
+Autonomous Solver for Victor's Company (@Victors_Company_bot) Deep Mine Arcade Minigame (/api/arcade/mine/*).
 
 Mathematical & Game-Engine Strategy:
 - Tool: Shovel (Cost: 25 VIC, Energy: 25, Hearts: 3, Power: 1).
+- Capital Guard: Requires min_balance (default 50.0 VIC) to prevent coin depletion on volatile runs.
 - Safe Rows: Rows 0 and 1 have Ue.safeRows = 2 (strictly ZERO hazards, 0% bust chance).
-- Reachability: Row 0 is directly reachable; Row 1 is reachable once the tile directly above is opened.
-- Optimization: Prioritizes sparkle tiles (hint & 1 != 0) on soft dirt (cost = 1) over boulders (cost = 2).
-- Cash Out: Safely calls /api/arcade/mine/end before energy runs out or when bag hits cap (~28.8 VIC),
-  ensuring 100% bag retention + 90% energy refund with zero risk of heart loss.
+- Smart Layer 1 Probing: When hearts == 3 and energy >= 4, probes accessible Layer 1 (Row 2) soft dirt tiles.
+- Zero Bust Guarantee: Immediately cashes out (/api/arcade/mine/end) if hearts <= 2 OR bag >= 25.0 VIC (profit secured).
+- Energy Refund: Unused energy is refunded at 60% upon safe cashout, protecting unspent capital.
 """
 
 import os
@@ -25,11 +25,18 @@ logger = logging.getLogger("victors_arcade")
 
 VICTORS_API = "https://server.victors.company/api"
 VICTORS_ORIGIN = "https://app.victors.company"
+MIN_BALANCE_TO_PLAY = 50.0  # Only enter new expeditions if balance >= 50 VIC
 
 
-async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: dict, account_name: str, max_runs: int = 10) -> dict:
+async def solve_deep_mine_expeditions(
+    session: aiohttp.ClientSession,
+    headers: dict,
+    account_name: str,
+    max_runs: int = 10,
+    min_balance: float = MIN_BALANCE_TO_PLAY
+) -> dict:
     """
-    Executes safe Deep Mine expeditions for an authenticated account.
+    Executes safe, EV-optimized Deep Mine expeditions for an authenticated account.
     Returns summary of games played and balance changes.
     """
     stats = {"runs_played": 0, "net_vic": 0.0, "total_paid": 0.0, "final_balance": None}
@@ -43,7 +50,7 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
             me_data = await resp.json()
             st = me_data.get("state") or {}
             user = st.get("user") or {}
-            balance = user.get("inAppBalance", 0.0)
+            balance = float(user.get("inAppBalance", 0.0) or user.get("balance", 0.0) or 0.0)
             stats["initial_balance"] = balance
             stats["final_balance"] = balance
     except Exception as e:
@@ -71,8 +78,8 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
             if plays_left <= 0:
                 logger.info(f"[{account_name}] 🎮 Deep Mine: No plays left today ({plays_left}/10).")
                 break
-            if balance < 25.0:
-                logger.info(f"[{account_name}] 🎮 Deep Mine: Balance ({balance:.2f} VIC) < 25 VIC shovel cost. Skipping.")
+            if balance < min_balance:
+                logger.info(f"[{account_name}] 🎮 Deep Mine: Balance ({balance:.2f} VIC) < safe threshold ({min_balance} VIC). Preserving capital.")
                 break
 
             # Start new expedition with shovel
@@ -95,7 +102,7 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
             logger.warning(f"[{account_name}] No active expedition to play.")
             break
 
-        # 3. Autonomous Digging Loop (Rows 0 & 1 only: strictly 0 hazards)
+        # 3. Autonomous Digging Loop with Anti-Bust & Profit Lock
         run_state = active_run
         grid_w = 9
         dig_count = 0
@@ -104,47 +111,74 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
             open_str = run_state.get("open", "0" * 360)
             rock_str = run_state.get("rock", "0" * 360)
             hint_str = run_state.get("hint", "0" * 360)
-            energy = run_state.get("energy", 0)
+            current_energy = run_state.get("energy", 0)
+            current_hearts = run_state.get("hearts", 3)
+            current_bag = run_state.get("bag", 0.0)
 
-            if energy <= 2:
-                logger.info(f"[{account_name}] 🎮 Low energy ({energy}). Cashing out safe bag.")
+            # PROFIT LOCK: If bag already broke even or gained profit (>= 25 VIC), cash out immediately!
+            if current_bag >= 25.0:
+                logger.info(f"[{account_name}] 🎯 Profit target reached! Bag: {current_bag:.1f} VIC >= 25 VIC. Locking in profit.")
                 break
 
-            # Candidate safe tiles in Rows 0 and 1
+            # SAFETY LOCK: If hearts dropped below 3, cash out immediately before any bust risk!
+            if current_hearts <= 2:
+                logger.info(f"[{account_name}] 🛡️ Heart safety trigger: Hearts = {current_hearts}/3. Cashing out safely to guarantee zero bust.")
+                break
+
+            # Find reachable tiles in safe rows (y=0, y=1) and careful row 2
             candidates = []
-            for y in (0, 1):
+            max_depth = 2 if current_hearts == 3 else 1  # Only probe row 2 if full hearts
+
+            for y in range(max_depth + 1):
                 for x in range(grid_w):
                     idx = y * grid_w + x
-                    is_open = idx < len(open_str) and open_str[idx] == "1"
-                    if is_open:
+                    if idx >= len(open_str) or open_str[idx] == "1":
+                        continue  # Already opened
+
+                    # Check reachability:
+                    # Row 0 is directly reachable from top.
+                    # Row 1+ is reachable if tile directly above (x, y-1) is already opened ("1").
+                    is_reachable = (y == 0) or (open_str[(y - 1) * grid_w + x] == "1")
+                    if not is_reachable:
                         continue
 
-                    # Reachability: Row 0 is always open to dig; Row 1 requires (x, 0) to be open
-                    if y == 1:
-                        above_idx = 0 * grid_w + x
-                        above_open = above_idx < len(open_str) and open_str[above_idx] == "1"
-                        if not above_open:
-                            continue
-
-                    is_rock = idx < len(rock_str) and rock_str[idx] == "1"
+                    # Check energy cost: soft dirt costs 1, rock costs 2
+                    is_rock = (rock_str[idx] == "1") if idx < len(rock_str) else False
                     cost = 2 if is_rock else 1
-                    if energy < cost:
+                    if cost > current_energy:
                         continue
 
+                    # Sparkle hint
                     hint_char = hint_str[idx] if idx < len(hint_str) else "0"
                     hint_val = int(hint_char) if hint_char.isdigit() else 0
                     has_sparkle = bool(hint_val & 1)
 
-                    # Score priority:
-                    # Sparkle soft dirt: 100
-                    # Sparkle rock: 75
-                    # Plain soft dirt: 50
-                    # Plain rock: 20
-                    priority = (100 if has_sparkle else 50) - (25 if is_rock else 0)
-                    candidates.append({"x": x, "y": y, "cost": cost, "priority": priority, "sparkle": has_sparkle, "rock": is_rock})
+                    # Dynamic score priority:
+                    # Safe row sparkle soft dirt: 120
+                    # Safe row plain soft dirt: 80
+                    # Safe row sparkle rock: 60
+                    # Layer 1 (row 2) sparkle soft dirt: 50 (high EV opportunity)
+                    # Safe row plain rock: 30
+                    # Layer 1 plain soft dirt: 20
+                    # Never dig rocks in row 2
+                    if y < 2:
+                        priority = (120 if has_sparkle else 80) - (50 if is_rock else 0)
+                    else:
+                        if is_rock:
+                            continue  # Skip boulders in hazard layers
+                        priority = 50 if has_sparkle else 20
+
+                    candidates.append({
+                        "x": x,
+                        "y": y,
+                        "cost": cost,
+                        "priority": priority,
+                        "sparkle": has_sparkle,
+                        "rock": is_rock
+                    })
 
             if not candidates:
-                logger.info(f"[{account_name}] 🎮 All safe row tiles exhausted. Cashing out bag.")
+                logger.info(f"[{account_name}] 🎮 No further viable tiles within energy/safety bounds. Cashing out bag.")
                 break
 
             # Pick highest priority candidate
@@ -167,6 +201,9 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
                     if found and isinstance(found, dict) and found.get("coins", 0) > 0:
                         logger.info(f"[{account_name}] 💰 Found loot at ({chosen['x']},{chosen['y']})! +{found['coins']} VIC. Bag now: {run_state.get('bag')} VIC")
 
+                    if cell.get("hazard"):
+                        logger.warning(f"[{account_name}] ⚠️ Hit hazard at ({chosen['x']},{chosen['y']})! Hearts remaining: {run_state.get('hearts')}")
+
                     # If server concluded the game automatically (e.g. energy depleted or cap reached)
                     if dig_res.get("result"):
                         res_obj = dig_res.get("result", {})
@@ -175,7 +212,7 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
                         net = res_obj.get("net", paid - 25.0)
                         st = dig_res.get("state") or {}
                         user = st.get("user") or {}
-                        balance = user.get("inAppBalance", balance + paid)
+                        balance = float(user.get("inAppBalance", balance + paid) or user.get("balance", balance + paid) or 0.0)
                         stats["runs_played"] += 1
                         stats["total_paid"] += paid
                         stats["net_vic"] += net
@@ -199,7 +236,7 @@ async def solve_deep_mine_expeditions(session: aiohttp.ClientSession, headers: d
                         net = res_obj.get("net", paid - 25.0)
                         st = end_res.get("state") or {}
                         user = st.get("user") or {}
-                        balance = user.get("inAppBalance", balance + paid)
+                        balance = float(user.get("inAppBalance", balance + paid) or user.get("balance", balance + paid) or 0.0)
                         stats["runs_played"] += 1
                         stats["total_paid"] += paid
                         stats["net_vic"] += net
