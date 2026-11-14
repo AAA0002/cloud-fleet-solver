@@ -1,0 +1,44 @@
+name: "Proactive 12-Hour Cloud Token Refresher"
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run every 12 hours (at 02:00 and 14:00 UTC)
+    - cron: "0 2,14 * * *"
+
+jobs:
+  dispatch_cloud_token_refresh:
+    name: "Trigger MTProto Session Refresh on Render Node 3"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Trigger Cloud Token Refresh & Dispatch Sentinel Card
+        env:
+          SECRET_KEY: "${{ secrets.SECRET_KEY }}"
+          REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
+          RENDER_NODE_URL: "https://my-agy-fleet-standby-060h.onrender.com"
+        run: |
+          python3 scripts/maintenance/trigger_cloud_token_refresh.py
+
+      - name: Verify Token Freshness across 23 Accounts
+        env:
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
+        run: |
+          python3 scripts/maintenance/token_expiration_watchdog.py --no-notify
+
+      - name: Verify Zero-Secret Hygiene
+        run: |
+          python3 scripts/maintenance/scan_secrets.py
