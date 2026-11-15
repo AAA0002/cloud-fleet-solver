@@ -27,7 +27,7 @@ import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import RequestAppWebViewRequest
-from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
 from telethon.tl.types import InputBotAppShortName
 from dotenv import load_dotenv
 
@@ -189,6 +189,15 @@ async def process_account(account: dict, index: int, total: int):
             v_res = call_function("verifyTask", {"taskId": tid}, id_token)
             if v_res.get("verified"):
                 logger.info(f"  🎯 Completed Task: '{tid}' (+{v_res.get('creditedCents', rew)}¢)")
+
+        # Strict Ephemeral Cleanup (Rule 11): Leave channels and purge dialogs immediately
+        for ch in ["EarnVaulte", "Nexpaychanel"]:
+            try:
+                ch_ent = await client.get_entity(ch)
+                await client(LeaveChannelRequest(ch_ent))
+                await client.delete_dialog(ch_ent)
+            except Exception:
+                pass
 
         # 6. Check Dashboard & Balance
         dash = call_function("getDashboard", {}, id_token)
