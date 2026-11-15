@@ -2,11 +2,11 @@
 """
 finish_all_fleet_sidetasks.py
 =============================================================================
-COMPREHENSIVE 12-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
+COMPREHENSIVE 13-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
 =============================================================================
 Sweeps and completes all available side-tasks, daily check-ins, social joins,
 cooldown missions, wallet verifications, and referral commission claims across
-all dynamic accounts in the fleet for all 12 legitimate bots:
+all dynamic accounts in the fleet for all 13 legitimate bots:
   1. ATF Miner (@atfminers_bot)
   2. Kynex Network (@Kynex_miningbot)
   3. PepeGram (@Pepe_gram_bot)
@@ -19,6 +19,7 @@ all dynamic accounts in the fleet for all 12 legitimate bots:
   10. JVault Miner (@JVaultMinerBot)
   11. TAVORA Node (@TavoraNode_Bot)
   12. Victor's Company (@Victors_Company_bot)
+  13. AZM Miner (@AZMIR_Miner_BOT)
 
 Zero Phone Load (Rule 4): Runs once as a clean batch script in cloud/container,
 exits cleanly, and persists updated tokens to Upstash Redis and Cloudflare Edge.
@@ -1198,22 +1199,21 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
             res["notes"].append(f"ref_coins_{ref_amt}")
             current_coins += ref_amt
 
-        # 8. Buy hens if coins >= 1000 (workers only, never on Master Account)
-        if str(uid) != str(MASTER_UID) and current_coins >= 1000:
+        # 8. Buy hens if coins >= 1000 (Fleet-wide, including Master Account)
+        if current_coins >= 1000:
             n_buy = int(current_coins // 1000)
             buy_res = await rpc("/api/buy", {"breed": "basic", "n": n_buy})
             if buy_res.get("ok"):
                 res["notes"].append(f"hens_bought_{n_buy}")
                 current_coins -= (n_buy * 1000)
 
-        # 9. Upgrade basket if affordable (workers only, never on Master Account)
-        if str(uid) != str(MASTER_UID):
-            try:
-                upg_res = await rpc("/api/upgrade", {})
-                if upg_res.get("ok"):
-                    res["notes"].append("basket_upgraded")
-            except Exception:
-                pass
+        # 9. Upgrade basket if affordable (Fleet-wide)
+        try:
+            upg_res = await rpc("/api/upgrade", {})
+            if upg_res.get("ok"):
+                res["notes"].append("basket_upgraded")
+        except Exception:
+            pass
 
         # 10. Auto-withdraw for ANY account to dedicated TON wallet if not used today
         try:
@@ -2334,6 +2334,33 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
     return res
 
 
+async def sweep_azm_tasks(session: aiohttp.ClientSession, uid: str, name: str, azm_init: str, acc: dict) -> Dict[str, Any]:
+    """Sweeps AZM Miner (@AZMIR_Miner_BOT) wallet binding, daily check-in, channel verification, and harvest claims."""
+    res = {"bot": "AZM Miner", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0}
+    if not azm_init:
+        res["notes"].append("missing_init_data")
+        return res
+
+    try:
+        from azm_miner import farm_azm_account
+        ton_wallet = get_ton_wallet_address(acc, uid)
+        farm_res = await farm_azm_account(session, azm_init, acc, ton_wallet_addr=ton_wallet)
+        res["success"] = farm_res.get("success", False)
+        res["balance"] = farm_res.get("balance", 0.0)
+        if farm_res.get("daily_claimed"):
+            res["tasks_claimed"] += 1
+            res["notes"].append("daily_checkin")
+        if farm_res.get("mined_claimed", 0) > 0:
+            res["tasks_claimed"] += 1
+            res["notes"].append(f"mined_+{farm_res['mined_claimed']:.2f}")
+        for n in farm_res.get("notes", []):
+            if n not in res["notes"]:
+                res["notes"].append(n)
+    except Exception as e:
+        res["notes"].append(f"err: {str(e)[:40]}")
+    return res
+
+
 # =============================================================================
 # 3. MAIN RUNNER (23-ACCOUNT PARALLEL PIPELINE)
 # =============================================================================
@@ -2422,6 +2449,11 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         vic_res = await sweep_victors_tasks(session, uid, name, vic_init, merged_toks)
         account_report["results"]["victors"] = vic_res
 
+        # 13. AZM Miner (@AZMIR_Miner_BOT)
+        azm_init = merged_toks.get("azm_init_data") or merged_toks.get("azm") or merged_toks.get("azmir") or ""
+        azm_res = await sweep_azm_tasks(session, uid, name, azm_init, merged_toks)
+        account_report["results"]["azm"] = azm_res
+
         # Sync tokens to Cloudflare Workers if newly refreshed
         await sync_token_to_cf(session, uid, merged_toks)
 
@@ -2439,7 +2471,7 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
 
 async def main():
     logger.info("=============================================================================")
-    logger.info(f"🎯 STARTING COMPLETE 12-BOT FLEET SIDE-TASK HARVEST ({len(ACCOUNTS)} ACCOUNTS)")
+    logger.info(f"🎯 STARTING COMPLETE 13-BOT FLEET SIDE-TASK HARVEST ({len(ACCOUNTS)} ACCOUNTS)")
     logger.info("=============================================================================")
 
     conn = aiohttp.TCPConnector(limit=25, ttl_dns_cache=300)
@@ -2455,7 +2487,7 @@ async def main():
 
         # Print Summary
         logger.info("\n" + "=" * 80)
-        logger.info(f"📊 11-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(ACCOUNTS)} ACCOUNTS)")
+        logger.info(f"📊 13-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(ACCOUNTS)} ACCOUNTS)")
         logger.info("=" * 80)
         total_tasks = 0
         for rep in reports:
@@ -2472,9 +2504,11 @@ async def main():
             life_cl = res.get("lifetime", {}).get("tasks_claimed", 0)
             jv_cl = res.get("jvault", {}).get("tasks_claimed", 0)
             tav_cl = res.get("tavora", {}).get("tasks_claimed", 0)
-            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + jv_cl + tav_cl
+            vic_cl = res.get("victors", {}).get("tasks_claimed", 0)
+            azm_cl = res.get("azm", {}).get("tasks_claimed", 0)
+            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + jv_cl + tav_cl + vic_cl + azm_cl
             total_tasks += acc_total
-            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} JV:{jv_cl} TVR:{tav_cl} | Tot: {acc_total}")
+            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} JV:{jv_cl} TVR:{tav_cl} VIC:{vic_cl} AZM:{azm_cl} | Tot: {acc_total}")
 
         logger.info("=" * 80)
         logger.info(f"🏁 GRAND TOTAL SIDE-TASKS/REWARDS CLAIMED: {total_tasks}")
@@ -2494,14 +2528,16 @@ async def main():
         life_tot = sum(r["results"].get("lifetime", {}).get("tasks_claimed", 0) for r in reports)
         jv_tot = sum(r["results"].get("jvault", {}).get("tasks_claimed", 0) for r in reports)
         tav_tot = sum(r["results"].get("tavora", {}).get("tasks_claimed", 0) for r in reports)
+        vic_tot = sum(r["results"].get("victors", {}).get("tasks_claimed", 0) for r in reports)
+        azm_tot = sum(r["results"].get("azm", {}).get("tasks_claimed", 0) for r in reports)
         elapsed = time.time() - t_start
 
         if bot_token and notif_channel:
             short_card = (
-                f"⚡ <b>Fleet 11-Bot Auto-Harvest Complete</b>\n"
+                f"⚡ <b>Fleet 13-Bot Auto-Harvest Complete</b>\n"
                 f"• <b>Accounts Farmed:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code>\n"
                 f"• <b>Tasks & Rewards Claimed:</b> <code>{total_tasks} Total Claimed</code>\n"
-                f"• <b>Active Protocols (11/11):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • JV:{jv_tot} • TVR:{tav_tot}</code>\n"
+                f"• <b>Active Protocols (13/13):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • JV:{jv_tot} • TVR:{tav_tot} • VIC:{vic_tot} • AZM:{azm_tot}</code>\n"
                 f"• <b>Duration:</b> <code>{elapsed:.1f}s</code> | <b>Node:</b> <code>Render Cloud Mesh</code>\n"
                 f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
             )

@@ -8,7 +8,7 @@ on:
 
 jobs:
   sweep_fleet_sidetasks:
-    name: "Autonomous 12-Bot Fleet Sweeper & Withdrawal Sentinel"
+    name: "Autonomous 13-Bot Fleet Sweeper & Withdrawal Sentinel"
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -29,28 +29,33 @@ jobs:
 
       - name: 1. Verify & Auto-Heal Token Freshness (Pre-Flight)
         env:
-          UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
-          REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
+          ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
           SECRET_KEY: "${{ secrets.SECRET_KEY }}"
         run: |
           python scripts/maintenance/token_expiration_watchdog.py
 
-      - name: 2. Execute 12-Bot Fleet Side-Task & Mining Sweep
+      - name: 2. Execute 13-Bot Fleet Side-Task & Mining Sweep
         env:
-          UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
-          ALERT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
+          ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
+          ALERT_BOT_TOKEN: "${{ secrets.ALERT_BOT_TOKEN || secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN }}"
+          ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
           OWNER_ID: "${{ secrets.OWNER_ID || '6727787768' }}"
         run: |
           python finish_all_fleet_sidetasks.py
 
       - name: 3. Universal Fleet Auto-Withdrawal Sweep & Readiness Audit (Post-Flight)
         env:
-          UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
-          REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
+          ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
           PAYOUT_CHANNEL_ID: "-1004402765950"
         run: |
@@ -59,9 +64,10 @@ jobs:
 
       - name: 4. Automated Fleet Cleaner & Hygiene Maintenance
         env:
-          UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
-          REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
+          ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
         run: |
           python scripts/maintenance/fleet_automated_cleaner.py --skip-dialogs
