@@ -266,33 +266,58 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
 
 
 def trigger_cloud_token_refresh(render_node: str) -> bool:
-    """Trigger the autonomous token collection engine on the cloud Render Node."""
-    print(f"🚀 Triggering Cloud Token Refresher on {render_node}/collect-tokens...")
-    url = f"{render_node}/collect-tokens"
-    headers = {
-        "Authorization": f"Bearer {SECRET_KEY}",
-        "Content-Type": "application/json"
-    }
+    """Trigger the autonomous token collection engine (100% Free Cloud Native Architecture)."""
+    print("🚀 Initiating Cloud Token Refresh (100% Free GitHub & Cloudflare Architecture)...")
 
+    # 1. Native Cloud Runner Execution (Direct on GitHub Actions or VM with Zero Bandwidth Costs)
+    refresher_path = os.path.join(BASE_DIR, "refresh_cloud_tokens.py")
+    if os.path.exists(refresher_path):
+        print(f"⚡ Running native cloud token refresher: {refresher_path}...")
+        try:
+            import subprocess
+            proc = subprocess.run([sys.executable, refresher_path], timeout=600)
+            if proc.returncode == 0:
+                print("✅ Native cloud token collection completed successfully.")
+                return True
+        except Exception as pe:
+            print(f"⚠️ Native token refresh note: {pe}")
+
+    # 2. GitHub Actions Cloud Workflow Trigger (Unlimited Free Compute & Zero Bandwidth Limits)
     try:
-        r = safe_post(url, headers=headers, json_data={"reason": "watchdog_auto_heal"}, timeout=45)
-        if r.status_code == 200:
-            print("✅ Cloud token collection request accepted by Render node.")
+        import subprocess
+        cmd = ["gh", "workflow", "run", "proactive_token_refresher.yml", "--repo", "AAA0002/cloud-fleet-solver"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if proc.returncode == 0:
+            print("✅ Successfully dispatched GitHub Actions token refresher (unlimited free compute).")
             return True
-        else:
-            print(f"⚠️ Render response {r.status_code}: {r.text[:200]}")
-    except Exception as e:
-        print(f"⚠️ Error contacting Render node: {e}")
+    except Exception as ge:
+        print(f"⚠️ GitHub Actions workflow dispatch note: {ge}")
 
-    # Fallback to Cloudflare Worker trigger endpoint
+    # 3. Cloudflare Worker Edge Trigger Fallback
     try:
         cf_url = "https://restore-agy.agorameet.workers.dev/api/tokens/refresh"
+        headers = {
+            "Authorization": f"Bearer {SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
         r_cf = safe_post(cf_url, headers=headers, timeout=15)
         if r_cf.status_code == 200:
             print("✅ Triggered token collection via Cloudflare Edge failover.")
             return True
     except Exception as cfe:
-        print(f"⚠️ Cloudflare fallback failed: {cfe}")
+        print(f"⚠️ Cloudflare fallback note: {cfe}")
+
+    # 4. Optional Render Fallback (if active & not suspended)
+    if render_node and not render_node.endswith(".onrender.com"):
+        try:
+            url = f"{render_node}/collect-tokens"
+            headers = {"Authorization": f"Bearer {SECRET_KEY}", "Content-Type": "application/json"}
+            r = safe_post(url, headers=headers, json_data={"reason": "watchdog_auto_heal"}, timeout=30)
+            if r.status_code == 200:
+                print("✅ Cloud token collection accepted by secondary standby node.")
+                return True
+        except Exception:
+            pass
 
     return False
 
