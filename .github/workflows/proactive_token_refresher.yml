@@ -3,12 +3,12 @@ name: "Proactive 12-Hour Cloud Token Refresher"
 on:
   workflow_dispatch:
   schedule:
-    # Run every 6 hours around the clock in the cloud (00:00, 06:00, 12:00, 18:00 UTC)
-    - cron: "0 */6 * * *"
+    # Run every 12 hours (at 02:00 and 14:00 UTC)
+    - cron: "0 2,14 * * *"
 
 jobs:
   dispatch_cloud_token_refresh:
-    name: "Autonomous MTProto Cloud Token Refresher (Option 1 - $0 Free)"
+    name: "Trigger MTProto Session Refresh on Render Node 3"
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
