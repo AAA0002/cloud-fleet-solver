@@ -229,7 +229,8 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
         "uid": uid,
         "name": name,
         "protocols": {},
-        "ready_to_withdraw": []
+        "ready_to_withdraw": [],
+        "upstream_paused_claims": []
     }
 
     # 1. Chicken Land
@@ -401,7 +402,7 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
         except Exception:
             pass
 
-    # 9. Kynex Network
+    # 9. Kynex Network (Upstream withdrawals paused by official Kynex team until TGE)
     knx_init = tokens.get("kynex_init_data") or tokens.get("knx_init_data")
     if knx_init:
         try:
@@ -410,10 +411,11 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             is_ready = knx_bal >= threshold
             report["protocols"]["kynex"] = {
                 "balance": knx_bal, "threshold": threshold, "unit": "KNX",
-                "ready": is_ready, "pct": min(100.0, round((knx_bal / threshold) * 100, 1)) if threshold > 0 else 0
+                "ready": is_ready, "upstream_paused": True, "note": "Withdrawals paused by Kynex team upstream until TGE (HTTP 503)",
+                "pct": min(100.0, round((knx_bal / threshold) * 100, 1)) if threshold > 0 else 0
             }
             if is_ready:
-                report["ready_to_withdraw"].append(("kynex", knx_bal, "KNX"))
+                report["upstream_paused_claims"].append(("kynex", knx_bal, "KNX"))
         except Exception:
             pass
 
@@ -497,6 +499,7 @@ async def run_audit_and_sweep(execute_sweep: bool = False, notify: bool = True):
     print("=" * 75)
 
     all_ready = []
+    all_upstream_paused = []
     async with aiohttp.ClientSession() as session:
         tasks = [audit_single_account(session, acc) for acc in accounts]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -505,14 +508,22 @@ async def run_audit_and_sweep(execute_sweep: bool = False, notify: bool = True):
             if isinstance(rep, dict):
                 for bot_id, bal, unit in rep["ready_to_withdraw"]:
                     all_ready.append((rep["uid"], rep["name"], bot_id, bal, unit))
+                for bot_id, bal, unit in rep.get("upstream_paused_claims", []):
+                    all_upstream_paused.append((rep["uid"], rep["name"], bot_id, bal, unit))
 
-    print(f"\n🎯 SUMMARY: {len(all_ready)} claims ready across {len(accounts)} accounts.")
+    print(f"\n🎯 SUMMARY: {len(all_ready)} active claims ready across {len(accounts)} accounts.")
     if all_ready:
         for uid, name, bot_id, bal, unit in all_ready:
             proto_info = WITHDRAWAL_THRESHOLDS.get(bot_id, {})
             print(f"  🟢 [{name}] Ready in {proto_info.get('name', bot_id)}: {bal:.2f} {unit} (Threshold: {proto_info.get('threshold')} {unit})")
     else:
-        print("  🟡 All accounts are currently in the ACCUMULATING phase toward minimum thresholds.")
+        print("  🟡 All accounts are currently in the ACCUMULATING phase toward active minimum thresholds.")
+
+    if all_upstream_paused:
+        print(f"\n⏸️ UPSTREAM PAUSED BY BOT DEVELOPERS ({len(all_upstream_paused)} accounts met threshold):")
+        for uid, name, bot_id, bal, unit in all_upstream_paused:
+            proto_info = WITHDRAWAL_THRESHOLDS.get(bot_id, {})
+            print(f"  ⏸️ [{name}] {proto_info.get('name', bot_id)}: {bal:.2f} {unit} (Upstream cashouts disabled by bot team pending TGE - HTTP 503)")
 
     print("=" * 75)
 
