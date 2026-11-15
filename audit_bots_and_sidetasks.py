@@ -865,15 +865,22 @@ async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
                     "Referer": "https://app.victors.company/"
                 }
                 if vic_pass:
-                    vic_h["x-human-pass"] = vic_pass
+                    if isinstance(vic_pass, str) and vic_pass.strip().startswith("{"):
+                        try:
+                            p_hp = json.loads(vic_pass)
+                            if isinstance(p_hp, dict) and p_hp.get("humanPass"):
+                                vic_pass = p_hp.get("humanPass")
+                        except Exception:
+                            pass
+                    vic_h["x-human-pass"] = str(vic_pass)
                 async with session.get("https://server.victors.company/api/me", headers=vic_h, timeout=aiohttp.ClientTimeout(total=8)) as vr:
                     if vr.status == 200:
                         vd = await vr.json()
-                        vu = vd.get("user", {}) or vd
-                        v_bal = float(vu.get("coins", 0) or vu.get("balance", 0) or 0)
-                        v_lvl = vu.get("level", 1)
-                        b_rep["core"] = {"status": f"Active: {v_bal:,.0f} Coins (Level {v_lvl})", "balance": v_bal, "level": v_lvl}
-                        b_rep["side_tasks"].append(f"Level {v_lvl} • {v_bal:,.0f} Coins")
+                        vu = vd.get("user") or vd.get("state", {}).get("user") or vd
+                        v_bal = float(vu.get("inAppBalance", 0) or vu.get("coins", 0) or vu.get("balance", 0) or 0)
+                        v_lvl = vu.get("peakLevel", 1) or vu.get("level", 1)
+                        b_rep["core"] = {"status": f"Active: {v_bal:,.0f} VICX (Level {v_lvl})", "balance": v_bal, "level": v_lvl}
+                        b_rep["side_tasks"].append(f"Level {v_lvl} • {v_bal:,.0f} VICX")
                     elif vr.status == 403:
                         b_rep["core"] = {"status": "Human Pass Required (Turnstile Protected)"}
                     else:
