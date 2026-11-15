@@ -83,7 +83,7 @@ TAVORA_REF = "ref_MW0MB8RV"
 VICTORS_REF = "ref_9DB8C58014"
 AZM_BOT = "AZMIR_Miner_BOT"
 AZM_REF = "6727787768"
-AZM_APP_URL = "https://developing-ken-middle-php.trycloudflare.com/"
+AZM_APP_URL = os.getenv("AZM_APP_URL", "https://amd-dot-thin-resident.trycloudflare.com/")
 
 
 def robust_json_loads(val):

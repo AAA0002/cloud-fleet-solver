@@ -32,7 +32,8 @@ from typing import Dict, Any, Optional
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("azm_miner")
 
-AZM_API_BASE = "https://developing-ken-middle-php.trycloudflare.com/api"
+AZM_API_BASE_DEFAULT = "https://amd-dot-thin-resident.trycloudflare.com/api"
+AZM_API_BASE = os.getenv("AZM_API_BASE") or AZM_API_BASE_DEFAULT
 MASTER_UID = "6727787768"
 
 async def farm_azm_account(

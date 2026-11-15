@@ -232,6 +232,37 @@ def get_victors_pass_from_upstash(uid: int) -> str:
     return None
 
 
+def mark_victors_referral_bound(uid: int):
+    """Marks account as referral bound in Upstash Redis fleet:accounts."""
+    if not (UPSTASH_URL and UPSTASH_TOKEN):
+        return
+    try:
+        req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:accounts", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode())
+            res = data.get("result")
+            if res:
+                accounts = json.loads(res) if isinstance(res, str) else res
+                modified = False
+                for a in accounts:
+                    if str(a.get("user_id") or a.get("account_id")) == str(uid):
+                        a["victors_referral_bound"] = True
+                        a["vic_referral_bound"] = True
+                        modified = True
+                        break
+                if modified:
+                    set_req = urllib.request.Request(
+                        f"{UPSTASH_URL}/set/fleet:accounts",
+                        data=json.dumps(accounts).encode(),
+                        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(set_req, timeout=6):
+                        pass
+    except Exception as e:
+        logger.warning(f"Error marking victors_referral_bound for {uid}: {e}")
+
+
 def save_victors_pass_to_upstash(uid: int, human_pass: str):
     """Saves valid Victor's Company humanPass to Upstash Redis with 24-hour TTL."""
     if not (UPSTASH_URL and UPSTASH_TOKEN and human_pass):
@@ -253,6 +284,7 @@ def save_victors_pass_to_upstash(uid: int, human_pass: str):
         )
         with urllib.request.urlopen(req_ttl, timeout=5):
             pass
+        mark_victors_referral_bound(uid)
     except Exception as e:
         logger.warning(f"Error saving Victor's pass to Redis: {e}")
 
