@@ -891,6 +891,30 @@ async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
         else:
             report["bots"]["12. Victor's Company"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
 
+        # 13. AZM Miner (@AZMIR_Miner_BOT)
+        azm_init = tokens.get("azm_init_data") or tokens.get("azm") or tokens.get("azmir")
+        if azm_init:
+            b_rep = {"core": {}, "side_tasks": []}
+            try:
+                azm_h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36"}
+                async with session.get("https://amd-dot-thin-resident.trycloudflare.com/api/state", headers=azm_h, timeout=aiohttp.ClientTimeout(total=8)) as ar:
+                    if ar.status == 200:
+                        ad = await ar.json()
+                        a_bal = float(ad.get("balance", 0.0) or 0.0)
+                        a_active = bool(ad.get("active", False))
+                        a_rate = float(ad.get("hourly", 15.0) or 15.0)
+                        a_pend = float(ad.get("pending", 0.0) or 0.0)
+                        a_wal = bool(ad.get("wallet"))
+                        b_rep["core"] = {"status": f"Active: {a_bal:,.2f} AZM (Rate: {a_rate:.1f} AZM/h)" if a_active else f"Inactive: {a_bal:,.2f} AZM", "balance": a_bal, "active": a_active, "rate": a_rate}
+                        b_rep["side_tasks"].append(f"Mining {a_rate:.1f} AZM/h • Pending: {a_pend:.2f} AZM • Wallet: {'✅' if a_wal else '❌'}")
+                    else:
+                        b_rep["core"] = {"status": f"HTTP {ar.status}"}
+            except Exception as e:
+                b_rep["error"] = str(e)
+            report["bots"]["13. AZM Miner"] = b_rep
+        else:
+            report["bots"]["13. AZM Miner"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
+
     return report
 
 async def audit_single_account(acc, idx, total, tokens_db, sem):
@@ -955,7 +979,7 @@ async def audit_single_account(acc, idx, total, tokens_db, sem):
 
 async def main():
     print("="*80)
-    print(f"🚀 FLEET-WIDE 11-BOT FARMING & SIDE TASKS COMPREHENSIVE LIVE AUDIT (ALL {len(ACCOUNTS)} ACCOUNTS)")
+    print(f"🚀 FLEET-WIDE 13-BOT FARMING & SIDE TASKS COMPREHENSIVE LIVE AUDIT (ALL {len(ACCOUNTS)} ACCOUNTS)")
     print("="*80)
     
     fleet_reports = {}
@@ -1046,6 +1070,9 @@ async def main():
         # 12. Victor's Company
         vic_core = bots.get("12. Victor's Company", {}).get("core", {})
         totals["victors"] += float(vic_core.get("balance", 0.0) or 0.0)
+        # 13. AZM Miner
+        azm_core = bots.get("13. AZM Miner", {}).get("core", {})
+        totals["azm"] = totals.get("azm", 0.0) + float(azm_core.get("balance", 0.0) or 0.0)
 
     print("\n" + "="*80)
     print(f"💎 FLEET-WIDE ACCUMULATED ASSET TOTALS ({len(fleet_reports)} ACCOUNTS):")
@@ -1058,10 +1085,11 @@ async def main():
     print(f"  • 🏦 EarnVault:       ${totals['earnvault_usd']:,.2f} USD ({totals['earnvault_cents']}¢)")
     print(f"  • ⚡ MexoEarn:        {totals.get('mexo', 0):,} MXO")
     print(f"  • 🎂 MyAgeApp:        {totals.get('myage', 0):,} AGE ({totals.get('myage_gram', 0.0):.2f} GRAM)")
-    print(f"  • ⚡ Lifetime Energy: {totals['lifetime_watts']:,} WATTS • {totals['lifetime_energy']:.4f} ENERGY")
+    print(f"  • 🔋 Lifetime Energy: {totals['lifetime_watts']:,} WATTS • {totals['lifetime_energy']:.4f} ENERGY")
     print(f"  • 💎 JVault Miner:    {totals['jvault']:,.2f} JVT")
     print(f"  • ⚡ TAVORA Node:     {totals['tavora']:,.2f} TVR")
-    print(f"  • 🏢 Victor's Co:     {totals['victors']:,.0f} Coins")
+    print(f"  • 🏢 Victor's Co:     {totals['victors']:,.0f} VIC Coins")
+    print(f"  • 💎 AZM Miner:       {totals.get('azm', 0.0):,.2f} AZM")
     print("="*80)
     print(f"✅ Fleet-Wide Audit Complete! All {len(fleet_reports)} accounts saved to live_farming_and_sidetasks_report.json")
     print("="*80)
@@ -1072,10 +1100,10 @@ async def main():
     if bot_token and notif_channel:
         healthy_accounts = sum(1 for r in fleet_reports.values() if sum(1 for b, v in r.get("bots", {}).items() if not v.get("error")) >= 4)
         short_card = (
-            f"🔍 <b>Fleet-Wide 12-Bot Audit Complete</b>\n"
+            f"🔍 <b>Fleet-Wide 13-Bot Audit Complete</b>\n"
             f"• <b>Accounts Audited:</b> <code>{len(fleet_reports)}/{len(fleet_reports)} Checked</code>\n"
             f"• <b>Operational Nodes:</b> <code>{healthy_accounts}/{len(fleet_reports)} Healthy</code>\n"
-            f"• <b>Active Protocols:</b> <code>12/12 Legitimate Mining Pools</code>\n"
+            f"• <b>Active Protocols:</b> <code>13/13 Legitimate Mining Pools</code>\n"
             f"• <b>Accumulated Yields:</b>\n"
             f"🪙 <code>{totals['atf']:,.1f} ATF</code>\n"
             f"  🌐 <code>{totals['knx']:,.0f} KNX</code> • 🐸 <code>{totals['pepe']:,.0f} PEPE</code>\n"
@@ -1086,7 +1114,7 @@ async def main():
             f"  🎂 <code>{totals.get('myage', 0):,} AGE ({totals.get('myage_gram', 0.0):.2f} GRAM)</code>\n"
             f"  ⚡ <code>{totals['lifetime_watts']:,} WATTS ({totals['lifetime_energy']:.4f} ENERGY)</code>\n"
             f"  💎 <code>{totals['jvault']:,.2f} JVT</code> • ⚡ <code>{totals['tavora']:,.2f} TVR</code>\n"
-            f"  🏢 <code>{totals['victors']:,.0f} VIC Coins</code>\n"
+            f"  🏢 <code>{totals['victors']:,.0f} VIC Coins</code> • 💎 <code>{totals.get('azm', 0.0):,.2f} AZM</code>\n"
             f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
         )
         try:

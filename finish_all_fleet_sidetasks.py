@@ -195,12 +195,15 @@ if not ton_wallets and UPSTASH_URL and UPSTASH_TOKEN:
 def get_ton_wallet_address(acc: dict, uid: str) -> str:
     """Returns dedicated TON address for account with robust type conversion."""
     if acc:
-        if acc.get("ton_wallet") and acc["ton_wallet"].get("address"):
-            return acc["ton_wallet"]["address"]
+        tw = acc.get("ton_wallet")
+        if isinstance(tw, dict) and tw.get("address"):
+            return tw["address"]
+        elif isinstance(tw, str) and tw:
+            return tw
         if acc.get("ton"):
-            return acc["ton"]
+            return str(acc["ton"])
         if acc.get("ton_address"):
-            return acc["ton_address"]
+            return str(acc["ton_address"])
     s_uid = str(uid)
     w_entry = ton_wallets.get(s_uid)
     if not w_entry and s_uid.isdigit():
