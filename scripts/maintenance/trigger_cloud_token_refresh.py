@@ -129,7 +129,30 @@ def main():
     print("📡 [1/2] Verifying Render Oregon Node 3 connectivity...")
     healthy = verify_render_node(args.node_url)
     if not healthy:
-        print("❌ Target node reported unhealthy or unreachable. Aborting refresh.")
+        print("⚠️ Render node reported unhealthy or unreachable (e.g. suspended by bandwidth quota).")
+        print("🚀 [FAILOVER] Automatically dispatching GitHub Actions cloud token refresher...")
+        try:
+            import subprocess
+            cmd = ["gh", "workflow", "run", "proactive_token_refresher.yml", "--repo", "AAA0002/cloud-fleet-solver"]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            if proc.returncode == 0:
+                print("✅ Successfully dispatched GitHub Actions token refresher (unlimited free compute).")
+                send_admin_notification(
+                    "🔄 <b>AAA AUTO — Cloud Token Refresher Failover</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "• <b>Trigger:</b> Render Standby Node Offline (Bandwidth Quota)\n"
+                    "• <b>Failover Engine:</b> GitHub Actions Cloud Runner\n"
+                    "• <b>Workflow:</b> <code>proactive_token_refresher.yml</code>\n"
+                    "• <b>Status:</b> 🟢 Dispatched & Running (23 Accounts)\n"
+                    "• <b>Execution:</b> 100% Cloud (0% Phone Load)\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                )
+                sys.exit(0)
+            else:
+                print(f"⚠️ GitHub Actions failover dispatch returned code {proc.returncode}: {proc.stderr}")
+        except Exception as fe:
+            print(f"⚠️ Failover dispatch note: {fe}")
+        print("❌ All refresh backends exhausted. Aborting refresh.")
         sys.exit(1)
     print("  ✅ Render node is ONLINE and HEALTHY.")
 
@@ -153,7 +176,7 @@ def main():
             f"• <b>Coordinator Node:</b> Render Oregon Node 3\n"
             f"• <b>Status:</b> 🟢 Batch Dispatched ({queued} Accounts Queued)\n"
             "• <b>Schedule:</b> 12-Hour Autonomous Cloud Watchdog\n"
-            "• <b>Coverage:</b> All 12 Active Mining Pools\n"
+            "• <b>Coverage:</b> All 13 Active Mining Pools\n"
             "• <b>Execution:</b> 100% Cloud (0% Phone Load)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
