@@ -1,0 +1,56 @@
+name: "Weekly Encrypted Wallet Vault Snapshot & Disaster Recovery"
+
+on:
+  schedule:
+    # Run every Sunday at 00:00 UTC
+    - cron: "0 0 * * 0"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual on-demand snapshot"
+        required: false
+        default: "Manual Operator Snapshot"
+
+jobs:
+  snapshot_and_backup:
+    name: "Export & Encrypt Fleet Wallet Vault"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify OpenSSL Tooling
+        run: |
+          openssl version
+
+      - name: Generate & Deliver Encrypted Wallet Vault Snapshot
+        env:
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
+          ADMIN_NOTIFICATION_CHANNEL_ID: "${{ secrets.ADMIN_NOTIFICATION_CHANNEL_ID || '-1004358687850' }}"
+          SECRET_KEY: "${{ secrets.SECRET_KEY }}"
+          VAULT_ENCRYPTION_KEY: "${{ secrets.VAULT_ENCRYPTION_KEY || secrets.SECRET_KEY }}"
+        run: |
+          python3 scripts/maintenance/export_gpg_wallet_vault.py
+
+      - name: Upload Snapshot Artifacts to GitHub Run
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-wallet-vault-snapshot
+          path: backups/fleet_wallets_vault_*
+          retention-days: 90
+          if-no-files-found: warn
