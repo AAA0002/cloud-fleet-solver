@@ -86,6 +86,26 @@ AZM_REF = "6727787768"
 AZM_APP_URL = "https://developing-ken-middle-php.trycloudflare.com/"
 
 
+def robust_json_loads(val):
+    """Recursively unpacks double or triple serialized JSON strings from Redis/KV."""
+    if not val:
+        return {}
+    res = val
+    for _ in range(5):
+        if isinstance(res, str):
+            res_str = res.strip()
+            if (res_str.startswith("{") and res_str.endswith("}")) or (res_str.startswith("[") and res_str.endswith("]")):
+                try:
+                    res = json.loads(res_str)
+                except Exception:
+                    break
+            else:
+                break
+        else:
+            break
+    return res if isinstance(res, (dict, list)) else {}
+
+
 def load_accounts():
     """Loads accounts from accounts.json, Upstash Redis, or environment."""
     acc_path = os.path.join(BASE_DIR, "accounts.json")
@@ -106,9 +126,7 @@ def load_accounts():
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 d = json.loads(resp.read().decode())
-                r = d.get("result")
-                if isinstance(r, str):
-                    r = json.loads(r)
+                r = robust_json_loads(d.get("result"))
                 if isinstance(r, list) and r:
                     return r
         except Exception as e:
@@ -139,9 +157,12 @@ async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: s
                     ed = await er.json()
                     res_raw = ed.get("result")
                     if res_raw:
-                        existing_tokens = json.loads(res_raw) if isinstance(res_raw, str) else res_raw
+                        existing_tokens = robust_json_loads(res_raw)
         except Exception:
             pass
+
+    if not isinstance(existing_tokens, dict):
+        existing_tokens = {}
 
     payload = {
         **existing_tokens,
@@ -188,7 +209,9 @@ async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: s
                     if r_all.status == 200:
                         all_d = await r_all.json()
                         raw_all = all_d.get("result")
-                        master_dict = json.loads(raw_all) if isinstance(raw_all, str) else raw_all or {}
+                        master_dict = robust_json_loads(raw_all)
+                        if not isinstance(master_dict, dict):
+                            master_dict = {}
                         master_dict[str(uid)] = payload
                         await session.post(
                             f"{UPSTASH_URL}/set/miniapp_tokens",
@@ -556,7 +579,9 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
 
         # 13. Victor's Company (@Victors_Company_bot)
         vic_p = None if is_master else VICTORS_REF
-        vic_tok = await extract_bot_webapp_token(cl, VICTORS_BOT, start_param=vic_p, default_url="https://app.victors.company/", candidate_short_names=["app"], prefer_direct_url=True)
+        vic_tok = await extract_bot_webapp_token(cl, VICTORS_BOT, start_param=vic_p, default_url="https://app.victors.company/", candidate_short_names=["app"], prefer_direct_url=False)
+        if not vic_tok:
+            vic_tok = await extract_bot_webapp_token(cl, VICTORS_BOT, start_param=vic_p, default_url="https://app.victors.company/", candidate_short_names=["app"], prefer_direct_url=True)
         if vic_tok:
             tokens["victors_init_data"] = vic_tok
             print(f"  🏢 Victor's Company: Collected")

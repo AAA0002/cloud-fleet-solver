@@ -83,6 +83,25 @@ MASTER_EVM_VAULT = "0xfda4182001672b9f0f09e2118242e543e35ed5ce"
 PAYOUTS_CHANNEL = "-1004402765950"
 ADMIN_BOT_TOKEN = env.get("ADMIN_BOT_TOKEN") or env.get("REPORT_BOT_TOKEN") or env.get("TELEGRAM_BOT_TOKEN") or ""
 
+def robust_json_loads(val: Any) -> Any:
+    """Recursively unpacks double or triple serialized JSON strings from Redis/KV."""
+    if not val:
+        return {}
+    res = val
+    for _ in range(5):
+        if isinstance(res, str):
+            res_str = res.strip()
+            if (res_str.startswith("{") and res_str.endswith("}")) or (res_str.startswith("[") and res_str.endswith("]")):
+                try:
+                    res = json.loads(res_str)
+                except Exception:
+                    break
+            else:
+                break
+        else:
+            break
+    return res if isinstance(res, (dict, list)) else {}
+
 async def send_payout_receipt(session: aiohttp.ClientSession, msg: str):
     if not ADMIN_BOT_TOKEN:
         return
@@ -2210,11 +2229,11 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
                     pd = await pr.json()
                     r_val = pd.get("result")
                     if r_val:
-                        if isinstance(r_val, str) and "{" in r_val:
-                            try:
-                                hp = json.loads(r_val).get("humanPass")
-                            except Exception:
-                                hp = r_val
+                        p_hp = robust_json_loads(r_val)
+                        if isinstance(p_hp, dict) and p_hp.get("humanPass"):
+                            hp = p_hp["humanPass"]
+                        elif isinstance(p_hp, str) and len(p_hp) > 10:
+                            hp = p_hp
                         else:
                             hp = r_val
         except Exception:
