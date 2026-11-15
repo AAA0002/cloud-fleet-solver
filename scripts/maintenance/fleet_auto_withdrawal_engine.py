@@ -226,9 +226,12 @@ async def withdraw_chickenland(session: aiohttp.ClientSession, uid: str, name: s
             if f_cfg.get("on"):
                 req_eggs = int(f_cfg.get("eggs", 15))
             else:
-                min_usd = float(wi_d.get("minUsd") or 0.1017)
+                free_lock = wi_d.get("freeLock", {})
+                min_gram = float(free_lock.get("gram", 1.0) or 1.0)
+                ch_price = float(wi_d.get("price") or 1.048)
+                min_usd = min_gram * ch_price
                 egg_usd = float(wi_d.get("eggUsd") or 0.00000694444444444)
-                req_eggs = int(math.ceil(min_usd / egg_usd)) if egg_usd > 0 else 15000
+                req_eggs = int(math.ceil(min_usd / egg_usd)) if egg_usd > 0 else 150000
 
             egg_bal = wi_d.get("user", {}).get("eggBal", 0)
             if egg_bal < req_eggs:
@@ -285,8 +288,8 @@ async def withdraw_pepegram(session: aiohttp.ClientSession, uid: str, name: str,
                     if nh is not None:
                         hashes = float(nh or 0)
 
-        # 2. Check 1,000 PEPE threshold and execute withdrawal
-        if hashes >= 1000.0:
+        # 2. Check 2,000,000 PEPE threshold and execute withdrawal (min_swap_hashes is 2M = 10 TON)
+        if hashes >= 2000000.0:
             payload = {
                 "initData": pepe_init,
                 "tid": 1449,
@@ -306,7 +309,7 @@ async def withdraw_pepegram(session: aiohttp.ClientSession, uid: str, name: str,
 
 
 async def withdraw_lifetime_energy(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Lifetime Energy: Withdraw >= 1,000 Energy to Master TON Vault."""
+    """Lifetime Energy: Withdraw >= 500 Energy to Master TON Vault."""
     lt_init = tokens.get("lifetime_energy_init_data") or tokens.get("lifetime_init_data")
     if not lt_init:
         return None
@@ -333,7 +336,7 @@ async def withdraw_lifetime_energy(session: aiohttp.ClientSession, uid: str, nam
                     if nh is not None:
                         hashes = float(nh or 0)
 
-        if hashes >= 1000.0:
+        if hashes >= 500.0:
             payload = {
                 "initData": lt_init,
                 "tid": 5,
@@ -555,8 +558,8 @@ async def withdraw_mexoearn(session: aiohttp.ClientSession, uid: str, name: str,
             mxo_bal = float(u.get("mxoBalance", 0) or 0)
             wallet_addr = u.get("walletAddress") or MASTER_EVM_VAULT
             rate = float(u.get("mxoToUsdtRate", 0.0003) or 0.0003)
-            min_usdt = float(u.get("withdrawMinUsdt", 0.5) or 0.5)
-            min_mxo = min_usdt / rate if rate > 0 else 1666.67
+            min_usdt = float(u.get("withdrawMinUsdt", 10.0) or 10.0)
+            min_mxo = min_usdt / rate if rate > 0 else 33333.33
 
         # 3. Connect EVM wallet if missing
         if not u.get("walletAddress"):

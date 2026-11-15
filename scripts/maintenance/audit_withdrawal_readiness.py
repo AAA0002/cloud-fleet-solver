@@ -64,21 +64,21 @@ WITHDRAWAL_THRESHOLDS = {
     "chickenland": {
         "name": "Chicken Land",
         "symbol": "GRAM",
-        "threshold": 0.1001,
+        "threshold": 1.0,
         "action": "On-chain transfer to dedicated TON wallet",
         "unit": "GRAM"
     },
     "pepegram": {
         "name": "PepeGram",
         "symbol": "PEPE",
-        "threshold": 1000.0,
+        "threshold": 2000000.0,
         "action": "Swap to TON & withdraw to Master TON Vault",
         "unit": "PEPE"
     },
     "lifetime": {
         "name": "Lifetime Energy",
         "symbol": "ENERGY",
-        "threshold": 1000.0,
+        "threshold": 500.0,
         "action": "Withdraw to Master TON Vault",
         "unit": "Energy"
     },
@@ -99,7 +99,7 @@ WITHDRAWAL_THRESHOLDS = {
     "mexo": {
         "name": "MexoEarn",
         "symbol": "MXO",
-        "threshold": 1666.67,
+        "threshold": 33333.33,
         "action": "Cashout BEP20 USDT via /api/wallet/withdraw",
         "unit": "MXO"
     },
@@ -245,7 +245,8 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
                     egg_usd = float(d.get("eggUsd") or 0.0000069444)
                     ch_price = float(d.get("price") or 1.042)
                     balance_gram = (egg_bal * egg_usd) / ch_price if ch_price > 0 else 0.0
-                    threshold = WITHDRAWAL_THRESHOLDS["chickenland"]["threshold"]
+                    free_lock = d.get("freeLock", {})
+                    threshold = float(free_lock.get("gram", 1.0) or 1.0)
                     is_ready = balance_gram >= threshold and d.get("usedToday", 0) == 0
                     report["protocols"]["chickenland"] = {
                         "balance": balance_gram, "threshold": threshold, "unit": "GRAM",
@@ -329,8 +330,10 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
                             if mr.status == 200:
                                 u = (await mr.json()).get("user", {})
                                 balance = float(u.get("mxoBalance", 0) or 0)
-                                threshold = WITHDRAWAL_THRESHOLDS["mexo"]["threshold"]
-                                is_ready = balance >= threshold and u.get("walletAddress")
+                                min_usdt = float(u.get("withdrawMinUsdt", 10.0) or 10.0)
+                                rate = float(u.get("mxoToUsdtRate", 0.0003) or 0.0003)
+                                threshold = (min_usdt / rate) if rate > 0 else 33333.33
+                                is_ready = balance >= threshold and bool(u.get("walletAddress"))
                                 report["protocols"]["mexo"] = {
                                     "balance": balance, "threshold": threshold, "unit": "MXO",
                                     "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1))
