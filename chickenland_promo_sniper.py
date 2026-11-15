@@ -715,7 +715,13 @@ async def buy_hens_for_account(
     account: Dict[str, Any],
     coins_to_spend: int
 ) -> Dict[str, Any]:
-    """Autonomous compounding: buys basic hens with accumulated promo coins in background."""
+    """Autonomous compounding: buys basic hens with accumulated promo coins in background (workers only, never on Master)."""
+    # Strict Master Capital Protection: NEVER spend coins on Master Account
+    acc_uid = str(account.get("user_id") or "")
+    acc_phone = str(account.get("phone") or "")
+    if acc_uid == "6727787768" or acc_phone in ("+8801317342850", "01317342850"):
+        return {"bought": False, "n": 0, "reason": "master_capital_protected"}
+
     b64 = account.get("b64_token", "")
     n_hens = int(coins_to_spend // 1000)
     if n_hens < 1 or not b64:
@@ -850,6 +856,7 @@ async def snipe_promo_fleet(
                 buy_tasks = [
                     buy_hens_for_account(session, r["acc_info"], r.get("coins_to_spend", 0))
                     for r in results if r.get("ok") and r.get("can_buy_hens") and "acc_info" in r
+                    and str(r["acc_info"].get("user_id") or "") != "6727787768"
                 ]
                 if buy_tasks:
                     buy_results = await asyncio.gather(*buy_tasks, return_exceptions=True)
