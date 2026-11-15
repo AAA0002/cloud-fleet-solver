@@ -737,6 +737,30 @@ async def withdraw_kynex(session: aiohttp.ClientSession, uid: str, name: str, to
         pass
     return None
 
+
+async def withdraw_azm(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
+    """AZM Miner: Request TON withdrawal when balance >= 10,000 AZM."""
+    azm_init = tokens.get("azm_init_data") or tokens.get("azm") or tokens.get("azmir")
+    if not azm_init:
+        return None
+    try:
+        h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
+        async with session.get("https://developing-ken-middle-php.trycloudflare.com/api/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
+            if r.status != 200:
+                return None
+            d = await r.json()
+            balance = float(d.get("balance", 0.0) or 0.0)
+            threshold = float(d.get("min_wd", 10000.0) or 10000.0)
+            if balance >= threshold and d.get("wallet"):
+                async with session.post("https://developing-ken-middle-php.trycloudflare.com/api/withdraw", json={"amount": int(balance)}, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as wr:
+                    if wr.status == 200:
+                        recip = d.get("wallet") or ton_addr
+                        await record_payout_receipt("AZM Miner", "AZM", balance, recip, uid, name)
+                        return {"protocol": "AZM Miner", "amount": balance, "symbol": "AZM", "recipient": recip}
+    except Exception:
+        pass
+    return None
+
 # =============================================================================
 # UNIVERSAL FLEET AUTO-WITHDRAWAL EXECUTION PIPELINE
 # =============================================================================
@@ -855,6 +879,13 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
             results["total_withdrawn_count"] += 1
             results["receipts"].append(knx_res)
             results["by_protocol"]["Kynex Network"] = results["by_protocol"].get("Kynex Network", 0) + 1
+
+        # 13. AZM Miner (>= 10,000 AZM to dedicated TON wallet)
+        azm_res = await withdraw_azm(session, uid, name, tokens, ton_addr)
+        if azm_res:
+            results["total_withdrawn_count"] += 1
+            results["receipts"].append(azm_res)
+            results["by_protocol"]["AZM Miner"] = results["by_protocol"].get("AZM Miner", 0) + 1
 
     print(f"\n🎉 Universal Auto-Withdrawal Sweep Completed: {results['total_withdrawn_count']} Payouts Executed!")
     for proto, cnt in results["by_protocol"].items():

@@ -144,6 +144,13 @@ WITHDRAWAL_THRESHOLDS = {
         "threshold": 1.0,
         "action": "Claim node dividend to TVR balance",
         "unit": "TVR"
+    },
+    "azm": {
+        "name": "AZM Miner",
+        "symbol": "AZM",
+        "threshold": 10000.0,
+        "action": "Withdraw AZM via /api/withdraw to dedicated TON wallet",
+        "unit": "AZM"
     }
 }
 
@@ -455,6 +462,26 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
         except Exception:
             pass
 
+    # 13. AZM Miner
+    azm_init = tokens.get("azm_init_data") or tokens.get("azm") or tokens.get("azmir")
+    if azm_init:
+        try:
+            h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0"}
+            async with session.get("https://developing-ken-middle-php.trycloudflare.com/api/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
+                if ar.status == 200:
+                    d = await ar.json()
+                    balance = float(d.get("balance", 0.0) or 0.0)
+                    threshold = float(d.get("min_wd", 10000.0) or 10000.0)
+                    is_ready = balance >= threshold and bool(d.get("wallet"))
+                    report["protocols"]["azm"] = {
+                        "balance": balance, "threshold": threshold, "unit": "AZM",
+                        "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1)) if threshold > 0 else 0
+                    }
+                    if is_ready:
+                        report["ready_to_withdraw"].append(("azm", balance, "AZM"))
+        except Exception:
+            pass
+
     return report
 
 
@@ -462,7 +489,7 @@ async def run_audit_and_sweep(execute_sweep: bool = False, notify: bool = True):
     """Execute complete withdrawal readiness audit and optional sweep."""
     accounts = load_accounts()
     print("=" * 75)
-    print("📊 AAA AUTO FLEET — WITHDRAWAL READINESS AUDITOR (12 BOTS)")
+    print("📊 AAA AUTO FLEET — WITHDRAWAL READINESS AUDITOR (13 BOTS)")
     print(f"Auditing {len(accounts)} Accounts against Ground-Truth Thresholds...")
     print("=" * 75)
 

@@ -2298,7 +2298,7 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
         except Exception:
             pass
 
-        # 4. Adsgram task claim
+        # 4. Adsgram & Reward task claims
         try:
             async with session.post("https://server.victors.company/api/ad-task/claim", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5)) as ar:
                 if ar.status == 200:
@@ -2306,6 +2306,36 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
                     if ad.get("success"):
                         res["tasks_claimed"] += 1
                         res["notes"].append("ad_task_claimed")
+        except Exception:
+            pass
+
+        try:
+            async with session.post("https://server.victors.company/api/ad-reward/claim", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5)) as rr:
+                if rr.status == 200:
+                    rd = await rr.json()
+                    if rd.get("success"):
+                        res["tasks_claimed"] += 1
+                        res["notes"].append("ad_reward_claimed")
+        except Exception:
+            pass
+
+        try:
+            async with session.post("https://server.victors.company/api/thanks-gift/claim", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5)) as tr_gift:
+                if tr_gift.status == 200:
+                    tgd = await tr_gift.json()
+                    if tgd.get("success"):
+                        res["tasks_claimed"] += 1
+                        res["notes"].append("thanks_gift_claimed")
+        except Exception:
+            pass
+
+        try:
+            async with session.post("https://server.victors.company/api/loss-voucher/cashout-claim", headers=vic_h, json={}, timeout=aiohttp.ClientTimeout(total=5)) as vr:
+                if vr.status == 200:
+                    vd = await vr.json()
+                    if vd.get("success"):
+                        res["tasks_claimed"] += 1
+                        res["notes"].append("voucher_claimed")
         except Exception:
             pass
 
