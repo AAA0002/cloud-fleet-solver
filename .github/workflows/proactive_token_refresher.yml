@@ -8,7 +8,7 @@ on:
 
 jobs:
   dispatch_cloud_token_refresh:
-    name: "Trigger MTProto Session Refresh on Render Node 3"
+    name: "Autonomous MTProto Cloud Token Refresher (Option 1 - $0 Free)"
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
