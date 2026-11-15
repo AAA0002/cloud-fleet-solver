@@ -3,8 +3,8 @@ name: "Autonomous Fleet Side-Task & Mining Sweeper"
 on:
   workflow_dispatch:
   schedule:
-    # Run every 2 hours continuously in the cloud
-    - cron: "0 */2 * * *"
+    # Run hourly around the clock in the cloud
+    - cron: "0 * * * *"
 
 jobs:
   sweep_fleet_sidetasks:

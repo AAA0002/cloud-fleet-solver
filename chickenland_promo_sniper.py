@@ -756,15 +756,17 @@ async def trigger_emergency_token_refresh():
     LAST_EMERGENCY_REFRESH_TIME = now_er
 
     render_endpoints = [
-        os.getenv("RENDER_SERVICE_URL", "https://my-agy-fleet-standby-060h.onrender.com") + "/collect-tokens?force=1",
         "http://127.0.0.1:10000/collect-tokens?force=1",
         "http://127.0.0.1:8000/collect-tokens?force=1"
     ]
+    if os.getenv("RENDER_SERVICE_URL"):
+        render_endpoints.insert(0, os.getenv("RENDER_SERVICE_URL").rstrip("/") + "/collect-tokens?force=1")
     try:
         secret = os.getenv("SECRET_KEY") or os.getenv("CF_SECRET_KEY") or "agy_cf_secret_7d36994e_2026"
         connector = aiohttp.TCPConnector(limit=5)
         async with aiohttp.ClientSession(connector=connector) as session:
             headers = {"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}
+            triggered = False
             for ep in render_endpoints:
                 try:
                     url = ep if "secret=" in ep else f"{ep}&secret={secret}"
@@ -776,7 +778,16 @@ async def trigger_emergency_token_refresh():
                     ) as r:
                         if r.status in (200, 201):
                             logger.info(f"[Sniper Emergency] Token collection triggered on {ep}")
+                            triggered = True
                             break
+                except Exception:
+                    pass
+            if not triggered:
+                try:
+                    cf_url = "https://restore-agy.agorameet.workers.dev/api/tokens/refresh"
+                    async with session.post(cf_url, headers=headers, json={"source": "emergency_promo_unauthorized"}, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                        if r.status == 200:
+                            logger.info("[Sniper Emergency] Token collection triggered via Cloudflare Edge.")
                 except Exception:
                     pass
         # Immediate quick-reload + delayed reload after cloud batch completes (~45s)
@@ -1320,15 +1331,88 @@ async def start_http_poller(poll_interval: float = 1.5):
             await asyncio.sleep(poll_interval)
 
 # =====================================================================
+# SUPERVISOR & CLOUD RUNNER HEARTBEAT RELAY
+# =====================================================================
+def is_sniper_already_running(threshold_seconds: float = 45.0) -> bool:
+    """Checks if another cloud sniper runner is currently active (< 45s heartbeat)."""
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            hb = redis_command("GET", "fleet:chickenland_sniper:heartbeat")
+            if hb:
+                data = json.loads(hb) if isinstance(hb, str) else hb
+                ts = float(data.get("timestamp", 0))
+                age = time.time() - ts
+                if age < threshold_seconds:
+                    logger.info(f"[Sniper Supervisor] Active heartbeat found from runner (age: {age:.1f}s < {threshold_seconds}s).")
+                    return True
+        except Exception as e:
+            logger.warning(f"[Sniper Supervisor] Heartbeat check note: {e}")
+    return False
+
+async def start_heartbeat_loop(max_runtime: float = 0.0):
+    """
+    Sends periodic heartbeats to Upstash Redis and Turso every 20 seconds.
+    Monitors maximum runtime for seamless baton relay handoff before GitHub Actions 6-hour limit.
+    """
+    start_time = time.time()
+    logger.info(f"[Sniper Heartbeat] Loop started. Max runtime: {max_runtime if max_runtime > 0 else 'Unlimited'}s")
+    while True:
+        try:
+            await asyncio.sleep(20)
+            now = time.time()
+            uptime = now - start_time
+
+            # 1. Update Upstash Redis & Turso heartbeat
+            hb_data = {
+                "status": "HEALTHY",
+                "timestamp": now,
+                "uptime_seconds": int(uptime),
+                "accounts_loaded": len(CACHED_FLEET_TOKENS),
+                "seen_codes": len(SEEN_CODES),
+                "claimed_codes": len(CLAIMED_CODES),
+                "exhausted_codes": len(EXHAUSTED_CODES),
+                "engine": "MTPROTO_SOCKET" if (ACTIVE_TELETHON_CLIENT and getattr(ACTIVE_TELETHON_CLIENT, "is_connected", lambda: False)()) else "HTTP_POLLER"
+            }
+            if UPSTASH_URL and UPSTASH_TOKEN:
+                try:
+                    redis_command("SET", "fleet:chickenland_sniper:heartbeat", json.dumps(hb_data), "EX", "60")
+                except Exception:
+                    pass
+            if TURSO_TOKEN:
+                try:
+                    turso_set("fleet:chickenland_sniper:heartbeat", hb_data)
+                except Exception:
+                    pass
+
+            # 2. Check max runtime relay handoff (e.g. before 6h GitHub Actions runner cap)
+            if max_runtime > 0 and uptime >= max_runtime:
+                logger.info(f"[Sniper Relay] Reached max runtime of {max_runtime}s (~{uptime/3600:.1f}h). Dispatching relay handoff to next cloud runner...")
+                try:
+                    import subprocess
+                    p = subprocess.run(["gh", "workflow", "run", "chickenland_sniper_runner.yml"], capture_output=True, text=True, timeout=15)
+                    logger.info(f"[Sniper Relay] gh workflow run dispatched: exit={p.returncode}")
+                except Exception as e_gh:
+                    logger.warning(f"[Sniper Relay] gh trigger note: {e_gh}")
+                # Wait 25s for next runner to spin up before exiting
+                await asyncio.sleep(25)
+                logger.info("[Sniper Relay] Clean baton handoff complete. Terminating current runner.")
+                os._exit(0)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"[Sniper Heartbeat Note]: {e}")
+
+# =====================================================================
 # UNIFIED DAEMON LAUNCHER
 # =====================================================================
-async def run_unified_sniper_daemon(poll_interval: float = 3.0):
+async def run_unified_sniper_daemon(poll_interval: float = 3.0, max_runtime: float = 0.0):
     """
     Unified 24/7 Cloud Sniper Coordinator:
     1. Pre-loads all 24 fleet tokens and historical codes into memory.
     2. Runs startup check to instantly snipe any unexhausted active code.
     3. Launches MTProto Push Socket Listener (0ms latency).
     4. Launches Secondary Async HTTP Poller (fallback redundancy).
+    5. Runs atomic cloud heartbeat loop for supervisor and zero-downtime baton handoffs.
     """
     print("=" * 80)
     print("🐔 CHICKEN LAND SUB-SECOND DUAL-ENGINE PROMO CODE SNIPER DAEMON STARTING")
@@ -1389,10 +1473,11 @@ async def run_unified_sniper_daemon(poll_interval: float = 3.0):
     except Exception as e:
         print(f"[Sniper Startup Scrape]: {e}")
 
-    # Launch both engines concurrently with resilient exception handling
+    # Launch all engines concurrently with resilient exception handling
     await asyncio.gather(
         start_mtproto_listener(),
         start_http_poller(poll_interval=poll_interval),
+        start_heartbeat_loop(max_runtime=max_runtime),
         return_exceptions=True
     )
 
@@ -1402,10 +1487,20 @@ if __name__ == "__main__":
     parser.add_argument("--code", type=str, help="Immediately snipe a specific promo code across all accounts")
     parser.add_argument("--check", action="store_true", help="Check channel and snipe active codes once")
     parser.add_argument("--watch", action="store_true", help="Run 24/7 dual-engine background watcher daemon")
-    parser.add_argument("--interval", type=float, default=3.0, help="Polling interval in seconds for HTTP fallback")
+    parser.add_argument("--interval", type=float, default=2.5, help="Polling interval in seconds for HTTP fallback")
+    parser.add_argument("--max-runtime", type=float, default=0.0, help="Maximum daemon runtime in seconds before triggering baton relay handoff")
+    parser.add_argument("--check-active", action="store_true", help="Check if another cloud sniper runner is currently active")
+    parser.add_argument("--check-active-first", action="store_true", help="When starting watch, exit gracefully if another runner is already active")
     args = parser.parse_args()
 
-    if args.code:
+    if args.check_active:
+        if is_sniper_already_running():
+            print("ALREADY_ACTIVE: A cloud sniper runner is currently active and healthy.")
+            sys.exit(0)
+        else:
+            print("INACTIVE: No active cloud sniper runner detected.")
+            sys.exit(1)
+    elif args.code:
         print(f"🚀 Sniping code: {args.code} across fleet...")
         rep = asyncio.run(snipe_promo_fleet(args.code))
         print(json.dumps(rep, indent=2))
@@ -1417,7 +1512,10 @@ if __name__ == "__main__":
             status = "❌ Exhausted" if c['is_exhausted'] else "🔥 ACTIVE"
             print(f"  • {c['code']} ({status}) - {c.get('raw_snippet', '')[:50]}")
     elif args.watch:
-        asyncio.run(run_unified_sniper_daemon(poll_interval=args.interval))
+        if args.check_active_first and is_sniper_already_running():
+            print("ALREADY_ACTIVE: A cloud sniper runner is already actively running. Exiting gracefully to prevent duplicate listener.")
+            sys.exit(0)
+        asyncio.run(run_unified_sniper_daemon(poll_interval=args.interval, max_runtime=args.max_runtime))
     else:
         codes = fetch_channel_codes()
         print(f"Chicken Land Promo Sniper Ready. Fleet accounts: {len(load_fleet_tokens())}")
