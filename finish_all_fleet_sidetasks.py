@@ -2006,6 +2006,7 @@ async def sweep_jvault_tasks(session: aiohttp.ClientSession, uid: str, name: str
             "User-Agent": acc.get("user_agent") or "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36",
             "Content-Type": "application/json",
             "Authorization": f"tma {init_data}",
+            "x-telegram-init-data": init_data,
             "Origin": "https://jvaultminer.world",
             "Referer": "https://jvaultminer.world/"
         }
@@ -2021,6 +2022,13 @@ async def sweep_jvault_tasks(session: aiohttp.ClientSession, uid: str, name: str
                 u = sd.get("user", {})
                 jv_uid = u.get("id", jv_uid)
                 res["balance"] = float(u.get("holdingBalance", 0) or u.get("totalAssets", 0) or 0)
+                sess = sr.headers.get("x-app-session")
+                if sess:
+                    h["x-app-session"] = sess
+            else:
+                err_t = await sr.text()
+                if "সিগনেচার" in err_t or "BOT_TOKEN" in err_t:
+                    res["notes"].append("server_signature_mismatch")
 
         # Connect & verify dedicated TON wallet
         ton_addr = get_ton_wallet_address(acc, uid)
@@ -2041,7 +2049,7 @@ async def sweep_jvault_tasks(session: aiohttp.ClientSession, uid: str, name: str
 
         for ep in ["tap-mine", "claim"]:
             try:
-                async with session.post(f"https://jvaultminer.world/api/user/{ep}", json={"userId": jv_uid}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as mr:
+                async with session.post(f"https://jvaultminer.world/api/user/{ep}", json={"userId": jv_uid, "initData": init_data}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as mr:
                     if mr.status == 200:
                         res["tasks_claimed"] += 1
             except Exception:
@@ -2050,7 +2058,7 @@ async def sweep_jvault_tasks(session: aiohttp.ClientSession, uid: str, name: str
         # Rewarded ad watch
         try:
             for _ in range(2):
-                async with session.post("https://jvaultminer.world/api/user/watch-ad", json={"userId": jv_uid, "clicked": 1}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
+                async with session.post("https://jvaultminer.world/api/user/watch-ad", json={"userId": jv_uid, "clicked": 1, "initData": init_data}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
                     if ar.status == 200:
                         ad_d = await ar.json()
                         if ad_d.get("success"):
@@ -2264,6 +2272,8 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
             except Exception:
                 pass
         vic_h["x-human-pass"] = str(hp)
+        vic_h["humanPass"] = str(hp)
+        vic_h["X-Human-Pass"] = str(hp)
 
     try:
         # Check /me
@@ -2348,7 +2358,7 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
         except Exception:
             pass
 
-        # 5. Dynamic Task Discovery & Claims
+        # 5. Dynamic Task Discovery & Claims with Ephemeral Channel Join-Claim-Leave
         try:
             async with session.get("https://server.victors.company/api/tasks", headers=vic_h, timeout=aiohttp.ClientTimeout(total=5)) as tr:
                 if tr.status == 200:
@@ -2356,7 +2366,33 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
                     for t in td.get("tasks", []):
                         if t.get("status") == "open":
                             tid = t.get("taskId") or t.get("id")
-                            if tid:
+                            t_url = t.get("url", "")
+                            t_kind = t.get("kind", "")
+                            if not tid:
+                                continue
+
+                            # Ephemeral channel task: Auto-join via MTProto, claim, then leave and delete dialog immediately
+                            t_cl = None
+                            ent_to_leave = None
+                            if (t_kind == "telegram_channel" or "t.me/" in str(t_url)) and acc.get("session_string"):
+                                try:
+                                    ch_clean = str(t_url).replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").split("/")[0].split("?")[0]
+                                    if ch_clean and not ch_clean.isdigit():
+                                        from telethon import TelegramClient
+                                        from telethon.sessions import StringSession
+                                        from telethon.tl.functions.channels import JoinChannelRequest
+                                        t_api_id = int(os.getenv("API_ID") or os.getenv("TELEGRAM_API_ID") or 2040)
+                                        t_api_hash = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or "5cd9e5bbfb572a4429a0c54774153b47"
+                                        t_cl = TelegramClient(StringSession(acc["session_string"]), t_api_id, t_api_hash)
+                                        await t_cl.connect()
+                                        if await t_cl.is_user_authorized():
+                                            ent_to_leave = await t_cl.get_entity(ch_clean)
+                                            await t_cl(JoinChannelRequest(ent_to_leave))
+                                            await asyncio.sleep(0.5)
+                                except Exception as ex_j:
+                                    logger.debug(f"[{name}] Victor channel join note: {ex_j}")
+
+                            try:
                                 await asyncio.sleep(0.3)
                                 async with session.post("https://server.victors.company/api/tasks/claim", headers=vic_h, json={"taskId": tid}, timeout=aiohttp.ClientTimeout(total=5)) as clm_r:
                                     if clm_r.status in (200, 201):
@@ -2364,6 +2400,16 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
                                         if c_data.get("success"):
                                             res["tasks_claimed"] += 1
                                             res["notes"].append(f"task_{tid}")
+                            finally:
+                                if t_cl and ent_to_leave:
+                                    try:
+                                        await t_cl.delete_dialog(ent_to_leave)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        await t_cl.disconnect()
+                                    except Exception:
+                                        pass
         except Exception:
             pass
 
