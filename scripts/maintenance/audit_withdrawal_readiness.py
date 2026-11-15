@@ -173,6 +173,27 @@ def load_accounts() -> List[Dict[str, Any]]:
     return []
 
 
+def robust_json_loads(val, default=None):
+    """Recursively unpack double/triple-serialized JSON from Redis."""
+    if val is None:
+        return default if default is not None else {}
+    curr = val
+    for _ in range(5):
+        if isinstance(curr, (dict, list)):
+            return curr
+        if isinstance(curr, str):
+            s = curr.strip()
+            if not s:
+                return default if default is not None else {}
+            try:
+                curr = json.loads(s)
+            except Exception:
+                return default if default is not None else {}
+        else:
+            break
+    return curr if isinstance(curr, (dict, list)) else (default if default is not None else {})
+
+
 async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict[str, Any]:
     """Retrieve WebApp tokens for account from Upstash Redis."""
     if not UPSTASH_URL or not UPSTASH_TOKEN:
@@ -185,7 +206,7 @@ async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict
                 data = await resp.json()
                 raw = data.get("result")
                 if raw:
-                    return json.loads(raw) if isinstance(raw, str) else raw
+                    return robust_json_loads(raw)
     except Exception:
         pass
     return {}
@@ -214,7 +235,7 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
                 if resp.status == 200:
                     d = (await resp.json()).get("result", {})
                     egg_bal = d.get("user", {}).get("eggBal", 0)
-                    egg_usd = float(d.get("eggUsd", 0.0000069444))
+                    egg_usd = float(d.get("eggUsd") or 0.0000069444)
                     ch_price = float(d.get("price") or 1.042)
                     balance_gram = (egg_bal * egg_usd) / ch_price if ch_price > 0 else 0.0
                     threshold = WITHDRAWAL_THRESHOLDS["chickenland"]["threshold"]
@@ -235,7 +256,7 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             h = {"Content-Type": "application/json", "Origin": "https://app.miniempire.app"}
             async with session.post("https://app.miniempire.app/miniapp/auth?tid=1449", json={"initData": pepe_init, "tid": 1449}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
                 if r.status == 200:
-                    hashes = float((await r.json()).get("user", {}).get("hashes", 0))
+                    hashes = float((await r.json()).get("user", {}).get("hashes") or 0)
                     threshold = WITHDRAWAL_THRESHOLDS["pepegram"]["threshold"]
                     is_ready = hashes >= threshold
                     report["protocols"]["pepegram"] = {
@@ -254,7 +275,7 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             h = {"Content-Type": "application/json", "Origin": "https://app.miniempire.app"}
             async with session.post("https://app.miniempire.app/miniapp/auth?tid=5", json={"initData": lt_init, "tid": 5}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
                 if r.status == 200:
-                    hashes = float((await r.json()).get("user", {}).get("hashes", 0))
+                    hashes = float((await r.json()).get("user", {}).get("hashes") or 0)
                     threshold = WITHDRAWAL_THRESHOLDS["lifetime"]["threshold"]
                     is_ready = hashes >= threshold
                     report["protocols"]["lifetime"] = {

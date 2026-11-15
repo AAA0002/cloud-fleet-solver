@@ -17,10 +17,16 @@ import sys
 import time
 import json
 import argparse
-import requests
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlencode
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Tuple
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
@@ -40,12 +46,99 @@ DEFAULT_RENDER_URL = "https://my-agy-fleet-standby-060h.onrender.com"
 MAX_TOKEN_AGE_HOURS = 16.0
 
 
+def robust_json_loads(val, default=None):
+    """Recursively unpack double/triple-serialized JSON strings from Redis."""
+    if val is None:
+        return default if default is not None else {}
+    curr = val
+    for _ in range(5):
+        if isinstance(curr, (dict, list)):
+            return curr
+        if isinstance(curr, str):
+            s = curr.strip()
+            if not s:
+                return default if default is not None else {}
+            try:
+                curr = json.loads(s)
+            except Exception:
+                return default if default is not None else {}
+        else:
+            break
+    return curr if isinstance(curr, (dict, list)) else (default if default is not None else {})
+
+
+class SafeResponse:
+    def __init__(self, status_code: int, data: Any = None, text: str = ""):
+        self.status_code = status_code
+        self._data = data
+        self.text = text
+
+    def json(self):
+        if isinstance(self._data, (dict, list)):
+            return self._data
+        try:
+            return json.loads(self.text)
+        except Exception:
+            return {}
+
+
+def safe_get(url: str, headers: dict = None, timeout: int = 8) -> SafeResponse:
+    if requests is not None:
+        try:
+            r = requests.get(url, headers=headers or {}, timeout=timeout)
+            return SafeResponse(r.status_code, None, r.text)
+        except Exception as e:
+            return SafeResponse(0, {}, str(e))
+    req = urllib.request.Request(url, headers=headers or {}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+            return SafeResponse(resp.status, None, raw)
+    except urllib.error.HTTPError as he:
+        err = he.read().decode("utf-8") if he.fp else str(he)
+        return SafeResponse(he.code, None, err)
+    except Exception as e:
+        return SafeResponse(0, {}, str(e))
+
+
+def safe_post(url: str, headers: dict = None, json_data: dict = None, form_data: dict = None, timeout: int = 15) -> SafeResponse:
+    if requests is not None:
+        try:
+            if json_data is not None:
+                r = requests.post(url, headers=headers or {}, json=json_data, timeout=timeout)
+            elif form_data is not None:
+                r = requests.post(url, headers=headers or {}, data=form_data, timeout=timeout)
+            else:
+                r = requests.post(url, headers=headers or {}, timeout=timeout)
+            return SafeResponse(r.status_code, None, r.text)
+        except Exception as e:
+            return SafeResponse(0, {}, str(e))
+    h = headers.copy() if headers else {}
+    body = None
+    if json_data is not None:
+        body = json.dumps(json_data).encode("utf-8")
+        h["Content-Type"] = "application/json"
+    elif form_data is not None:
+        body = urlencode(form_data).encode("utf-8")
+        h["Content-Type"] = "application/x-www-form-urlencoded"
+    req = urllib.request.Request(url, data=body, headers=h, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+            return SafeResponse(resp.status, None, raw)
+    except urllib.error.HTTPError as he:
+        err = he.read().decode("utf-8") if he.fp else str(he)
+        return SafeResponse(he.code, None, err)
+    except Exception as e:
+        return SafeResponse(0, {}, str(e))
+
+
 def get_active_render_node() -> str:
     """Retrieve the primary Render node URL from Upstash Redis or use default."""
     if UPSTASH_URL and UPSTASH_TOKEN:
         try:
             url = f"{UPSTASH_URL}/get/fleet:render_primary_url"
-            r = requests.get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=5)
+            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=5)
             if r.status_code == 200:
                 dyn = r.json().get("result")
                 if dyn and isinstance(dyn, str) and dyn.startswith("http"):
@@ -65,22 +158,41 @@ def load_accounts() -> List[Dict[str, Any]]:
         except Exception:
             pass
 
-    # Cloud fallback: Fetch exactly the 23 legitimate accounts from fleet:wallets_vault:*
-    if UPSTASH_URL and UPSTASH_TOKEN:
+    # Cloud fallback 1: Fetch from fleet:wallets_vault:* in Upstash Redis
+    u_url = UPSTASH_URL.rstrip("/")
+    if u_url and UPSTASH_TOKEN:
         try:
-            url = f"{UPSTASH_URL}/keys/fleet:wallets_vault:*"
-            r = requests.get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
+            url = f"{u_url}/keys/fleet:wallets_vault:*"
+            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
             if r.status_code == 200:
                 keys = r.json().get("result", [])
                 uids = sorted(list(set([k.split(":")[-1] for k in keys if k.split(":")[-1].isdigit() and len(k.split(":")[-1]) >= 9])))
-                accounts = []
-                for uid in uids:
-                    accounts.append({"user_id": uid, "name": f"Account {uid}"})
-                return accounts
-        except Exception:
-            pass
+                if uids:
+                    return [{"user_id": uid, "name": f"Account {uid}"} for uid in uids]
+        except Exception as e:
+            print(f"⚠️ Upstash wallets_vault query note: {e}")
 
-    return []
+        # Cloud fallback 2: Fetch from fleet:tokens:* in Upstash Redis
+        try:
+            url = f"{u_url}/keys/fleet:tokens:*"
+            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
+            if r.status_code == 200:
+                keys = r.json().get("result", [])
+                uids = sorted(list(set([k.split(":")[-1] for k in keys if k.split(":")[-1].isdigit() and len(k.split(":")[-1]) >= 9])))
+                if uids:
+                    return [{"user_id": uid, "name": f"Account {uid}"} for uid in uids]
+        except Exception as e:
+            print(f"⚠️ Upstash fleet:tokens query note: {e}")
+
+    # Cloud fallback 3: Autonomous static SSOT of the 23 verified fleet accounts
+    FLEET_23_UIDS = [
+        "6727787768", "7648254021", "8826375659", "8450010161", "8782429452",
+        "7734849205", "8025472383", "8851426148", "8203342513", "8190649727",
+        "7487048946", "8741547543", "8515097495", "8754160459", "8292850989",
+        "8706338304", "8745914619", "8486958448", "8448460677", "8705948924",
+        "7749125802", "8649988225", "8858823950"
+    ]
+    return [{"user_id": uid, "name": f"Account {uid}"} for uid in FLEET_23_UIDS]
 
 
 def inspect_account_tokens(uid: str) -> Dict[str, Any]:
@@ -90,12 +202,12 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
 
     try:
         url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
-        r = requests.get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
+        r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
         if r.status_code != 200 or not r.json().get("result"):
             return {"status": "MISSING_KEY", "age_hours": 999.0}
 
         raw = r.json().get("result")
-        data = json.loads(raw) if isinstance(raw, str) else raw
+        data = robust_json_loads(raw)
 
         now = time.time()
         synced_at = data.get("synced_at") or data.get("updated_at") or 0
@@ -163,7 +275,7 @@ def trigger_cloud_token_refresh(render_node: str) -> bool:
     }
 
     try:
-        r = requests.post(url, headers=headers, json={"reason": "watchdog_auto_heal"}, timeout=45)
+        r = safe_post(url, headers=headers, json_data={"reason": "watchdog_auto_heal"}, timeout=45)
         if r.status_code == 200:
             print("✅ Cloud token collection request accepted by Render node.")
             return True
@@ -175,7 +287,7 @@ def trigger_cloud_token_refresh(render_node: str) -> bool:
     # Fallback to Cloudflare Worker trigger endpoint
     try:
         cf_url = "https://restore-agy.agorameet.workers.dev/api/tokens/refresh"
-        r_cf = requests.post(cf_url, headers=headers, timeout=15)
+        r_cf = safe_post(cf_url, headers=headers, timeout=15)
         if r_cf.status_code == 200:
             print("✅ Triggered token collection via Cloudflare Edge failover.")
             return True
@@ -190,126 +302,134 @@ def send_watchdog_alert(
     fresh_count: int,
     expiring_count: int,
     critical_count: int,
-    auto_heal_triggered: bool,
-    avg_age: float
-) -> None:
-    """Dispatch concise operational status card to Admin Notification Channel (-1004358687850)."""
+    avg_age: float,
+    healed: bool,
+    target_node: str
+):
+    """Dispatches a clean operational card to the Admin Notification Channel (-1004358687850)."""
     if not REPORT_BOT_TOKEN or not ADMIN_NOTIFICATION_CHANNEL_ID:
+        print("ℹ️ Telegram alerting skipped (REPORT_BOT_TOKEN not configured).")
         return
 
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    heal_status = "🚀 Auto-Heal Triggered (Cloud Collection Active)" if auto_heal_triggered else "✅ Healthy (No Refresh Needed)"
-    health_icon = "🟢" if critical_count == 0 and expiring_count == 0 else ("🟡" if critical_count == 0 else "🔴")
+    now_utc = datetime.now(timezone.utc).strftime("%b %d, %H:%M UTC")
+
+    if critical_count > 0 or expiring_count > 0:
+        headline = "⚠️ <b>AAA FLEET TOKEN LIFESPAN ALERT</b>"
+        action_text = f"🔄 <b>Auto-Healing Triggered:</b> Dispatched collector request to {target_node}" if healed else "❌ Auto-healing request could not be delivered to Render node."
+    else:
+        headline = "🛡️ <b>AAA FLEET TOKENS HEALTHY & SYNCHRONIZED</b>"
+        action_text = "✅ <b>Lifespan Nominal:</b> All tokens actively accumulating inside 24h cryptographic window."
 
     text = (
-        f"🔄 <b>Autonomous Cloud Token Sentinel</b>\n"
-        f"📅 <i>{ts}</i>\n\n"
-        f"• <b>Fleet Health:</b> {health_icon} <code>{fresh_count}/{total_audited} Fresh (&lt;16h)</code>\n"
-        f"• <b>Average Token Age:</b> <code>{avg_age:.1f} hours</code> (Remaining: <code>{max(0.0, 24.0 - avg_age):.1f}h</code>)\n"
-        f"• <b>Expiring Soon (&gt;16h):</b> <code>{expiring_count} Accounts</code>\n"
-        f"• <b>Critical / Expired:</b> <code>{critical_count} Accounts</code>\n"
-        f"• <b>Action:</b> <code>{heal_status}</code>\n\n"
-        f"<i>Zero Phone Load Directive: 100% Cloud MTProto execution on Render Oregon Node.</i>"
+        f"{headline}\n\n"
+        f"📊 <b>Fleet Coverage:</b> {total_audited} Accounts Audited\n"
+        f"• 🟢 <b>Fresh (&lt;16h):</b> {fresh_count}/{total_audited}\n"
+        f"• 🟡 <b>Expiring Soon (16–20h):</b> {expiring_count}\n"
+        f"• 🔴 <b>Critical / Expired (&gt;20h):</b> {critical_count}\n"
+        f"• ⏱️ <b>Avg Lifespan Used:</b> {avg_age:.1f}h / 24.0h ({(24.0 - avg_age):.1f}h remaining)\n\n"
+        f"{action_text}\n"
+        f"⏱️ <i>Timestamp: {now_utc}</i>"
     )
 
+    url = f"https://api.telegram.org/bot{REPORT_BOT_TOKEN}/sendMessage"
     try:
-        url = f"https://api.telegram.org/bot{REPORT_BOT_TOKEN}/sendMessage"
         data = {
             "chat_id": ADMIN_NOTIFICATION_CHANNEL_ID,
             "text": text,
             "parse_mode": "HTML"
         }
-        requests.post(url, data=data, timeout=10)
+        safe_post(url, form_data=data, timeout=10)
         print("✅ Alert card dispatched to Admin Notification Channel.")
     except Exception as e:
         print(f"⚠️ Failed to send alert card: {e}")
 
 
-def run_watchdog(force_refresh: bool = False, notify: bool = True) -> Dict[str, Any]:
-    """Execute complete token expiration audit and self-healing loop."""
+def main():
+    parser = argparse.ArgumentParser(description="Autonomous Token Expiration Watchdog")
+    parser.add_argument("--force-refresh", action="store_true", help="Force trigger token refresh regardless of age")
+    parser.add_argument("--no-notify", action="store_true", help="Suppress Telegram alert channel notification")
+    args = parser.parse_args()
+
     print("🔍 Starting Autonomous Cloud Token Expiration Audit...")
     accounts = load_accounts()
     if not accounts:
         print("⚠️ No accounts found locally; fetching from Upstash Redis...")
         try:
             url = f"{UPSTASH_URL}/keys/fleet:tokens:*"
-            r = requests.get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
+            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
             keys = [k for k in r.json().get("result", []) if k.count(":") == 2]
             accounts = [{"user_id": k.split(":")[-1], "name": f"Account {k.split(':')[-1]}"} for k in keys]
         except Exception:
             pass
 
+    if not accounts:
+        print("❌ Error: No fleet accounts discovered. Check UPSTASH_URL / accounts.json.")
+        sys.exit(1)
+
     print(f"📋 Auditing {len(accounts)} accounts across Upstash Redis...")
 
-    fresh_count = 0
-    expiring_count = 0
-    critical_count = 0
-    total_ages = []
-    account_reports = []
+    fresh = 0
+    expiring = 0
+    critical = 0
+    total_age = 0.0
+    valid_ages = 0
+
+    expiring_uids = []
 
     for acc in accounts:
-        uid = str(acc.get("user_id") or acc.get("id") or acc.get("account_id"))
-        rep = inspect_account_tokens(uid)
-        rep["uid"] = uid
-        rep["account_name"] = acc.get("name", f"UID {uid}")
-        account_reports.append(rep)
+        uid = str(acc.get("user_id") or acc.get("account_id") or "")
+        if not uid or not uid.isdigit() or len(uid) < 9:
+            continue
 
-        if rep["status"] == "FRESH":
-            fresh_count += 1
-            total_ages.append(rep["age_hours"])
-        elif rep["status"] == "EXPIRING_SOON":
-            expiring_count += 1
-            total_ages.append(rep["age_hours"])
+        res = inspect_account_tokens(uid)
+        st = res.get("status")
+        age = res.get("age_hours", 999.0)
+
+        if age < 900.0:
+            total_age += age
+            valid_ages += 1
+
+        if st == "FRESH":
+            fresh += 1
+        elif st == "EXPIRING_SOON":
+            expiring += 1
+            expiring_uids.append(uid)
         else:
-            critical_count += 1
-            total_ages.append(rep["age_hours"])
+            critical += 1
+            expiring_uids.append(uid)
 
-    avg_age = sum(total_ages) / len(total_ages) if total_ages else 0.0
+    total_audited = fresh + expiring + critical
+    avg_age = round(total_age / valid_ages, 2) if valid_ages > 0 else 0.0
 
-    print(f"\n📊 Audit Results across {len(accounts)} Accounts:")
-    print(f"• 🟢 Fresh (<16h old): {fresh_count}")
-    print(f"• 🟡 Expiring Soon (16–20h): {expiring_count}")
-    print(f"• 🔴 Critical/Expired (>20h): {critical_count}")
-    print(f"• ⏱️ Average Token Age: {avg_age:.2f} hours (Remaining lifespan: {max(0.0, 24.0 - avg_age):.2f} hours)\n")
+    print(f"\n📊 Audit Results across {total_audited} Accounts:")
+    print(f"• 🟢 Fresh (<16h old): {fresh}")
+    print(f"• 🟡 Expiring Soon (16–20h): {expiring}")
+    print(f"• 🔴 Critical/Expired (>20h): {critical}")
+    print(f"• ⏱️ Average Token Age: {avg_age} hours (Remaining lifespan: {max(0.0, 24.0 - avg_age):.2f} hours)")
 
-    auto_heal_needed = force_refresh or (expiring_count > 0) or (critical_count > 0)
-    auto_heal_triggered = False
+    render_node = get_active_render_node()
+    healed = False
 
-    if auto_heal_needed:
-        print("⚠️ Token age threshold exceeded or refresh forced! Initiating Autonomous Cloud Self-Heal...")
-        render_node = get_active_render_node()
-        auto_heal_triggered = trigger_cloud_token_refresh(render_node)
+    needs_refresh = (critical > 0) or (expiring >= 3) or (avg_age >= MAX_TOKEN_AGE_HOURS) or args.force_refresh
+
+    if needs_refresh:
+        print(f"\n🚨 Token expiration threshold exceeded ({critical} critical, {expiring} expiring).")
+        healed = trigger_cloud_token_refresh(render_node)
     else:
-        print("🎉 All tokens are within safe operating lifespan. No cloud refresh required.")
+        print("\n🎉 All tokens are within safe operating lifespan. No cloud refresh required.")
 
-    if notify:
+    if not args.no_notify:
         send_watchdog_alert(
-            total_audited=len(accounts),
-            fresh_count=fresh_count,
-            expiring_count=expiring_count,
-            critical_count=critical_count,
-            auto_heal_triggered=auto_heal_triggered,
-            avg_age=avg_age
+            total_audited=total_audited,
+            fresh_count=fresh,
+            expiring_count=expiring,
+            critical_count=critical,
+            avg_age=avg_age,
+            healed=healed,
+            target_node=render_node
         )
 
-    return {
-        "total_audited": len(accounts),
-        "fresh_count": fresh_count,
-        "expiring_count": expiring_count,
-        "critical_count": critical_count,
-        "avg_age_hours": avg_age,
-        "auto_heal_triggered": auto_heal_triggered,
-        "reports": account_reports
-    }
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Autonomous Cloud Token Expiration & Self-Healing Watchdog")
-    parser.add_argument("--force", action="store_true", help="Force cloud token collection regardless of current age")
-    parser.add_argument("--no-notify", action="store_true", help="Do not send Telegram notification card")
-
-    args = parser.parse_args()
-    run_watchdog(force_refresh=args.force, notify=not args.no_notify)
+    sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -90,6 +90,27 @@ def load_fleet_accounts() -> List[Dict[str, Any]]:
     return []
 
 
+def robust_json_loads(val, default=None):
+    """Recursively unpack double/triple-serialized JSON from Redis."""
+    if val is None:
+        return default if default is not None else {}
+    curr = val
+    for _ in range(5):
+        if isinstance(curr, (dict, list)):
+            return curr
+        if isinstance(curr, str):
+            s = curr.strip()
+            if not s:
+                return default if default is not None else {}
+            try:
+                curr = json.loads(s)
+            except Exception:
+                return default if default is not None else {}
+        else:
+            break
+    return curr if isinstance(curr, (dict, list)) else (default if default is not None else {})
+
+
 async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict[str, Any]:
     """Retrieve all cached WebApp tokens for an account from Upstash Redis."""
     if not UPSTASH_URL or not UPSTASH_TOKEN:
@@ -101,7 +122,7 @@ async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict
             if resp.status == 200:
                 raw = (await resp.json()).get("result")
                 if raw:
-                    return json.loads(raw) if isinstance(raw, str) else raw
+                    return robust_json_loads(raw)
     except Exception:
         pass
     return {}
@@ -205,8 +226,8 @@ async def withdraw_chickenland(session: aiohttp.ClientSession, uid: str, name: s
             if f_cfg.get("on"):
                 req_eggs = int(f_cfg.get("eggs", 15))
             else:
-                min_usd = float(wi_d.get("minUsd", 0.1017))
-                egg_usd = float(wi_d.get("eggUsd", 0.00000694444444444))
+                min_usd = float(wi_d.get("minUsd") or 0.1017)
+                egg_usd = float(wi_d.get("eggUsd") or 0.00000694444444444)
                 req_eggs = int(math.ceil(min_usd / egg_usd)) if egg_usd > 0 else 15000
 
             egg_bal = wi_d.get("user", {}).get("eggBal", 0)
@@ -226,7 +247,7 @@ async def withdraw_chickenland(session: aiohttp.ClientSession, uid: str, name: s
                 if r_wd.status == 200:
                     res = (await r_wd.json()).get("result", {})
                     if res.get("ok"):
-                        calc_gram = req_eggs * egg_usd / float(wi_d.get("gramUsd", 1.042)) if egg_usd > 0 else 0.1001
+                        calc_gram = req_eggs * egg_usd / float(wi_d.get("gramUsd") or 1.042) if egg_usd > 0 else 0.1001
                         amount = float(res.get("amount") or calc_gram or 0.1001)
                         await record_payout_receipt("Chicken Land", "GRAM", amount, ton_addr, uid, name)
                         return {"protocol": "Chicken Land", "amount": amount, "symbol": "GRAM", "recipient": ton_addr}
@@ -253,7 +274,7 @@ async def withdraw_pepegram(session: aiohttp.ClientSession, uid: str, name: str,
             if r_auth.status != 200:
                 return None
             usr_data = (await r_auth.json()).get("user", {})
-            hashes = float(usr_data.get("hashes", 0))
+            hashes = float(usr_data.get("hashes") or 0)
 
         # Claim mining
         async with session.post("https://app.miniempire.app/miniapp/claim?tid=1449", json={"initData": pepe_init, "tid": 1449}, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as r_cl:
@@ -262,7 +283,7 @@ async def withdraw_pepegram(session: aiohttp.ClientSession, uid: str, name: str,
                 if isinstance(c_d, dict):
                     nh = c_d.get("total_hashes") or c_d.get("hashes")
                     if nh is not None:
-                        hashes = float(nh)
+                        hashes = float(nh or 0)
 
         # 2. Check 1,000 PEPE threshold and execute withdrawal
         if hashes >= 1000.0:
@@ -276,7 +297,7 @@ async def withdraw_pepegram(session: aiohttp.ClientSession, uid: str, name: str,
                 if r_wd.status == 200:
                     wd_res = await r_wd.json()
                     if wd_res.get("ok"):
-                        h_used = float(wd_res.get("hashes_used", hashes))
+                        h_used = float(wd_res.get("hashes_used") or hashes or 0)
                         await record_payout_receipt("PepeGram", "PEPE", h_used, MASTER_TON_VAULT, uid, name)
                         return {"protocol": "PepeGram", "amount": h_used, "symbol": "PEPE", "recipient": MASTER_TON_VAULT}
     except Exception:
@@ -301,7 +322,7 @@ async def withdraw_lifetime_energy(session: aiohttp.ClientSession, uid: str, nam
             if r_auth.status != 200:
                 return None
             usr_data = (await r_auth.json()).get("user", {})
-            hashes = float(usr_data.get("hashes", 0))
+            hashes = float(usr_data.get("hashes") or 0)
 
         # Claim energy
         async with session.post("https://app.miniempire.app/miniapp/claim?tid=5", json={"initData": lt_init, "tid": 5}, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as r_cl:
@@ -310,7 +331,7 @@ async def withdraw_lifetime_energy(session: aiohttp.ClientSession, uid: str, nam
                 if isinstance(c_d, dict):
                     nh = c_d.get("total_hashes") or c_d.get("hashes")
                     if nh is not None:
-                        hashes = float(nh)
+                        hashes = float(nh or 0)
 
         if hashes >= 1000.0:
             payload = {
@@ -323,7 +344,7 @@ async def withdraw_lifetime_energy(session: aiohttp.ClientSession, uid: str, nam
                 if r_wd.status == 200:
                     wd_res = await r_wd.json()
                     if wd_res.get("ok"):
-                        h_used = float(wd_res.get("hashes_used", hashes))
+                        h_used = float(wd_res.get("hashes_used") or hashes or 0)
                         await record_payout_receipt("Lifetime Energy", "ENERGY", h_used, MASTER_TON_VAULT, uid, name)
                         return {"protocol": "Lifetime Energy", "amount": h_used, "symbol": "ENERGY", "recipient": MASTER_TON_VAULT}
     except Exception:
@@ -694,11 +715,14 @@ async def withdraw_kynex(session: aiohttp.ClientSession, uid: str, name: str, to
     try:
         import kynex_miner
         auth_res = await kynex_miner.authenticate_kynex(session, k_init or "", k_rf)
-        if not auth_res or not auth_res.get("token"):
+        if not auth_res:
             return None
-        id_token = auth_res["token"]
-        prof = await kynex_miner.get_user_profile(session, id_token)
-        bal = float(prof.get("coins", 0) or 0)
+        id_token = auth_res.get("id_token") or auth_res.get("token")
+        k_uid = auth_res.get("uid") or uid
+        if not id_token or not k_uid:
+            return None
+        prof = await kynex_miner.get_user_profile(session, id_token, k_uid) or {}
+        bal = float(prof.get("knxBalance", 0) or prof.get("coins", 0) or prof.get("balance", 0) or 0)
 
         if bal >= 62500.0:
             usd_amt = bal * 0.00008
@@ -735,7 +759,7 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
                 if r_tw.status == 200:
                     raw_tw = (await r_tw.json()).get("result")
                     if raw_tw:
-                        ton_wallets_cache = json.loads(raw_tw) if isinstance(raw_tw, str) else raw_tw
+                        ton_wallets_cache = robust_json_loads(raw_tw)
         except Exception:
             pass
 
