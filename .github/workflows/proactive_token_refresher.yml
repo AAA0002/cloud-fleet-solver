@@ -20,21 +20,31 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
 
-      - name: Trigger Cloud Token Refresh & Dispatch Sentinel Card
-        env:
-          SECRET_KEY: "${{ secrets.SECRET_KEY }}"
-          REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
-          ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
-          RENDER_NODE_URL: "https://my-agy-fleet-standby-060h.onrender.com"
+      - name: Install Python Dependencies
         run: |
-          python3 scripts/maintenance/trigger_cloud_token_refresh.py
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Execute Autonomous Cloud Token Refresher (Zero Phone Load)
+        env:
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
+          ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
+          ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
+          CF_SECRET_KEY: "${{ secrets.CF_SECRET_KEY || secrets.SECRET_KEY }}"
+          SECRET_KEY: "${{ secrets.SECRET_KEY }}"
+        run: |
+          python3 refresh_cloud_tokens.py || python3 scripts/maintenance/trigger_cloud_token_refresh.py
 
       - name: Verify Token Freshness across 23 Accounts
         env:
-          UPSTASH_URL: "${{ secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN }}"
-          REPORT_BOT_TOKEN: "${{ secrets.ADMIN_BOT_TOKEN }}"
+          UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
+          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
+          REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
+          ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
         run: |
           python3 scripts/maintenance/token_expiration_watchdog.py --no-notify
