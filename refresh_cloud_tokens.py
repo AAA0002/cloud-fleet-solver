@@ -589,7 +589,8 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
 
         # 14. AZM Miner (@AZMIR_Miner_BOT)
         azm_p = None if is_master else AZM_REF
-        azm_tok = await extract_bot_webapp_token(cl, AZM_BOT, start_param=azm_p, default_url=AZM_APP_URL, candidate_short_names=["app"], prefer_direct_url=True)
+        azm_url = f"{AZM_APP_URL}?ref={AZM_REF}" if not is_master else AZM_APP_URL
+        azm_tok = await extract_bot_webapp_token(cl, AZM_BOT, start_param=azm_p, default_url=azm_url, candidate_short_names=["app"], prefer_direct_url=True)
         if azm_tok:
             tokens["azm_init_data"] = azm_tok
             tokens["azm"] = azm_tok
