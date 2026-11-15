@@ -313,14 +313,14 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
     # If prefer_direct_url requested, execute Strategy D first
     if prefer_direct_url and default_url:
         try:
+            is_jvault = ("jvault" in str(bot_username).lower() or "jvault" in str(default_url).lower())
             req_p = {
                 "peer": bot_ent,
                 "bot": bot_ent,
                 "platform": "android",
-                "url": default_url
+                "url": default_url,
+                "from_bot_menu": False if is_jvault else True
             }
-            if any(k in str(bot_username).lower() or k in str(default_url).lower() for k in ["jvault", "azm", "azmir"]):
-                req_p["from_bot_menu"] = True
             if start_param:
                 req_p["start_param"] = str(start_param)
             res = await client(RequestWebViewRequest(**req_p))
