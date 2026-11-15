@@ -131,6 +131,9 @@ class ChickenLandMiner:
         Reinvests eggs from egg balance into coins with an automatic +20% compounding bonus.
         Minimum reinvest amount is 1,000 eggs (step: 1,000).
         """
+        if str(self.user_id) == "6727787768":
+            return {"ok": False, "description": "Master account capital protected (no reinvestment)", "reinvested": 0}
+
         if eggs is None:
             prof = self.get_profile()
             user = prof.get("result", {}).get("user", {})
@@ -219,7 +222,9 @@ class ChickenLandMiner:
         return claimed
 
     def buy_hens(self, breed: str = "basic", max_count: int = 10) -> int:
-        """Buys hens of specified breed if coins are available."""
+        """Buys hens of specified breed if coins are available (workers only, never on Master Account)."""
+        if str(self.user_id) == "6727787768":
+            return 0
         prof = self.get_profile()
         user = prof.get("result", {}).get("user", {})
         coins = user.get("coins", 0)
@@ -237,7 +242,9 @@ class ChickenLandMiner:
         return 0
 
     def upgrade_basket(self) -> bool:
-        """Upgrades basket capacity if affordable."""
+        """Upgrades basket capacity if affordable (workers only, never on Master Account)."""
+        if str(self.user_id) == "6727787768":
+            return False
         prof = self.get_profile()
         user = prof.get("result", {}).get("user", {})
         coins = user.get("coins", 0)
