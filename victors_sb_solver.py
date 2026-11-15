@@ -413,20 +413,10 @@ def run_pipeline_for_account(uid: int, v_init: str, human_pass: str, is_master: 
                         if c_code in (200, 201) and isinstance(c_res, dict) and c_res.get("success"):
                             logger.info(f"🎁 UID {uid}: Claimed task {tid} (+{c_res.get('reward', t.get('reward', 0))} VIC)")
 
-        # 4. Hire Level 1 Miner
+        # 4. Hire Level 1 Miner (Free, unlocks Apprentice mining without home.noJob)
         u_code, u_res = safe_post(f"{VICTORS_API}/levels/unlock", {"level": 1}, extra_headers=v_headers)
         logger.info(f"⛏️ UID {uid}: Unlock Level 1 Miner response: {u_code} {u_res}")
-
-        # Check for higher level unlocks eligible with current balance (workers only, never spend master coins)
-        if str(uid) != "6727787768":
-            m_code, m_res = safe_get(f"{VICTORS_API}/me", extra_headers=v_headers)
-            if m_code == 200 and isinstance(m_res, dict):
-                st = m_res.get("state", {})
-                u_obj = st.get("user") or m_res.get("user") or {}
-                unlocked_lvl = u_obj.get("unlockedLevel", 1)
-                cur_lvl = u_obj.get("peakLevel") or u_obj.get("level", 1)
-                if unlocked_lvl > cur_lvl:
-                    safe_post(f"{VICTORS_API}/levels/unlock", {"level": unlocked_lvl}, extra_headers=v_headers)
+        # Capital Protection: Never auto-spend accumulated coins on costly level upgrades
 
         # 5. Mining claim
         c_code, c_res = safe_post(f"{VICTORS_API}/mining/claim", {}, extra_headers=v_headers)
