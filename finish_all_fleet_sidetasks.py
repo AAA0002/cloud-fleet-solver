@@ -52,8 +52,8 @@ logger = logging.getLogger("sidetask_sweeper")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Read environment variables
-env = {}
+# Read environment variables (prioritize os.environ for GitHub Actions/Cloud, fallback to local .env)
+env = dict(os.environ)
 env_file = os.path.join(BASE_DIR, ".env")
 if os.path.exists(env_file):
     with open(env_file) as f:
@@ -61,13 +61,16 @@ if os.path.exists(env_file):
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
-                env[k.strip()] = v.strip().strip('"').strip("'")
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+                if k not in env or not env[k]:
+                    env[k] = v
 
-UPSTASH_URL = env.get("UPSTASH_URL") or env.get("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = env.get("UPSTASH_TOKEN") or env.get("UPSTASH_REDIS_REST_TOKEN") or ""
-TURSO_URL = env.get("TURSO_DB_URL") or env.get("TURSO_DATABASE_URL") or env.get("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
-TURSO_TOKEN = env.get("TURSO_DB_TOKEN") or env.get("TURSO_AUTH_TOKEN") or ""
-SECRET_KEY = env.get("SECRET_KEY") or env.get("CF_SECRET_KEY") or ""
+UPSTASH_URL = os.environ.get("UPSTASH_URL") or os.environ.get("UPSTASH_REDIS_REST_URL") or env.get("UPSTASH_URL") or env.get("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
+UPSTASH_TOKEN = os.environ.get("UPSTASH_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN") or env.get("UPSTASH_TOKEN") or env.get("UPSTASH_REDIS_REST_TOKEN") or ""
+TURSO_URL = os.environ.get("TURSO_DB_URL") or os.environ.get("TURSO_DATABASE_URL") or os.environ.get("TURSO_URL") or env.get("TURSO_DB_URL") or env.get("TURSO_DATABASE_URL") or env.get("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
+TURSO_TOKEN = os.environ.get("TURSO_DB_TOKEN") or os.environ.get("TURSO_AUTH_TOKEN") or env.get("TURSO_DB_TOKEN") or env.get("TURSO_AUTH_TOKEN") or ""
+SECRET_KEY = os.environ.get("SECRET_KEY") or os.environ.get("CF_SECRET_KEY") or env.get("SECRET_KEY") or env.get("CF_SECRET_KEY") or ""
 
 CF_WORKERS = [
     "https://restore-agy.aaaai2.workers.dev",
@@ -77,11 +80,14 @@ CF_WORKERS = [
     "https://restore-agy.aaaai.workers.dev"
 ]
 
-MASTER_UID = "6727787768"
+MASTER_UID = os.environ.get("OWNER_ID") or env.get("OWNER_ID") or "6727787768"
 PRIMARY_TON_WALLET = "UQBPZiSvitdPU3VUyJK2mRaHVBl69xejw5aOrh1KfKA7gwDT"
 MASTER_EVM_VAULT = "0xfda4182001672b9f0f09e2118242e543e35ed5ce"
 PAYOUTS_CHANNEL = "-1004402765950"
-ADMIN_BOT_TOKEN = env.get("ADMIN_BOT_TOKEN") or env.get("REPORT_BOT_TOKEN") or env.get("TELEGRAM_BOT_TOKEN") or ""
+ADMIN_BOT_TOKEN = os.environ.get("ADMIN_BOT_TOKEN") or os.environ.get("REPORT_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN") or env.get("ADMIN_BOT_TOKEN") or env.get("REPORT_BOT_TOKEN") or env.get("TELEGRAM_BOT_TOKEN") or ""
+REPORT_BOT_TOKEN = os.environ.get("REPORT_BOT_TOKEN") or os.environ.get("ADMIN_BOT_TOKEN") or env.get("REPORT_BOT_TOKEN") or env.get("ADMIN_BOT_TOKEN") or ""
+ALERT_BOT_TOKEN = os.environ.get("ALERT_BOT_TOKEN") or os.environ.get("REPORT_BOT_TOKEN") or env.get("ALERT_BOT_TOKEN") or ""
+ADMIN_NOTIFICATION_CHANNEL_ID = os.environ.get("ADMIN_NOTIFICATION_CHANNEL_ID") or env.get("ADMIN_NOTIFICATION_CHANNEL_ID") or "-1004358687850"
 
 def robust_json_loads(val: Any) -> Any:
     """Recursively unpacks double or triple serialized JSON strings from Redis/KV."""
@@ -388,20 +394,20 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                 if r.status == 200:
                     d = await r.json()
                     raw = d.get("result")
-                    while isinstance(raw, str):
-                        raw = json.loads(raw)
+                    raw = robust_json_loads(raw)
                     if isinstance(raw, dict):
                         for uid, utoks in raw.items():
-                            if str(uid) == "8881914294": continue
-                            if uid not in tokens_db:
-                                tokens_db[uid] = utoks
+                            s_uid = str(uid)
+                            if s_uid == "8881914294": continue
+                            if s_uid not in tokens_db:
+                                tokens_db[s_uid] = utoks
                             else:
                                 for tk, tv in utoks.items():
                                     if tv:
-                                        if tk not in tokens_db[uid]:
-                                            tokens_db[uid][tk] = tv
-                                        elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(tokens_db[uid].get(tk)):
-                                            tokens_db[uid][tk] = tv
+                                        if tk not in tokens_db[s_uid]:
+                                            tokens_db[s_uid][tk] = tv
+                                        elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(tokens_db[s_uid].get(tk)):
+                                            tokens_db[s_uid][tk] = tv
         except Exception as e:
             logger.warning(f"Error loading miniapp_tokens: {e}")
 
@@ -428,10 +434,14 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                 ACCOUNTS.append({"user_id": int(duid), "account_id": duid, "name": name})
                 existing_uids.add(duid)
 
-    # 3. Merge individual fleet:tokens:{uid} from Upstash via high-speed pipeline (with parallel gather fallback)
+    # 3. Merge individual fleet:tokens:{uid} and victors:pass:{uid} from Upstash via high-speed pipeline
     if UPSTASH_URL and UPSTASH_TOKEN and discovered_uids:
         try:
-            pipeline_cmds = [["GET", f"fleet:tokens:{uid}"] for uid in discovered_uids if uid != "8881914294"]
+            pipeline_cmds = []
+            for uid in discovered_uids:
+                if uid != "8881914294":
+                    pipeline_cmds.append(["GET", f"fleet:tokens:{uid}"])
+                    pipeline_cmds.append(["GET", f"victors:pass:{uid}"])
             async with session.post(
                 f"{UPSTASH_URL}/pipeline",
                 headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
@@ -441,13 +451,13 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                 if pr.status == 200:
                     p_res = await pr.json()
                     for cmd, item in zip(pipeline_cmds, p_res):
-                        uid = cmd[1].split(":")[-1]
+                        key = cmd[1]
+                        uid = str(key.split(":")[-1])
                         raw = item.get("result")
-                        if raw:
-                            parsed = json.loads(raw) if isinstance(raw, str) else raw
-                            while isinstance(parsed, str):
-                                try: parsed = json.loads(parsed)
-                                except Exception: break
+                        if not raw:
+                            continue
+                        parsed = robust_json_loads(raw)
+                        if key.startswith("fleet:tokens:"):
                             if isinstance(parsed, dict):
                                 existing = tokens_db.setdefault(uid, {})
                                 for tk, tv in parsed.items():
@@ -456,6 +466,17 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                                             existing[tk] = tv
                                         elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(existing.get(tk)):
                                             existing[tk] = tv
+                        elif key.startswith("victors:pass:"):
+                            hp = None
+                            if isinstance(parsed, dict) and parsed.get("humanPass"):
+                                hp = parsed["humanPass"]
+                            elif isinstance(parsed, str) and len(parsed) > 10:
+                                hp = parsed
+                            elif raw and len(str(raw)) > 10:
+                                hp = raw
+                            if hp:
+                                existing = tokens_db.setdefault(uid, {})
+                                existing["victors_pass"] = hp
         except Exception as pe:
             logger.warning(f"Upstash pipeline token fetch fallback to parallel gather: {pe}")
             async def fetch_one(uid):
@@ -465,10 +486,7 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                             d = await r.json()
                             raw = d.get("result")
                             if raw:
-                                parsed = json.loads(raw) if isinstance(raw, str) else raw
-                                while isinstance(parsed, str):
-                                    try: parsed = json.loads(parsed)
-                                    except Exception: break
+                                parsed = robust_json_loads(raw)
                                 if isinstance(parsed, dict):
                                     return uid, parsed
                 except Exception:
@@ -478,7 +496,7 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
             gather_res = await asyncio.gather(*[fetch_one(uid) for uid in discovered_uids if uid != "8881914294"])
             for uid, parsed in gather_res:
                 if parsed and isinstance(parsed, dict):
-                    existing = tokens_db.setdefault(uid, {})
+                    existing = tokens_db.setdefault(str(uid), {})
                     for tk, tv in parsed.items():
                         if tv:
                             if tk not in existing:
@@ -2422,7 +2440,7 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         
         # Smart merge: prioritize freshest tokens based on auth_date
         merged_toks = {**acc}
-        acc_toks = tokens_db.get(uid, {})
+        acc_toks = tokens_db.get(str(uid)) or tokens_db.get(uid) or {}
         for k, v in acc_toks.items():
             if v:
                 if k not in merged_toks or not merged_toks[k]:
