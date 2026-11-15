@@ -472,7 +472,8 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
     if azm_init:
         try:
             h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0"}
-            async with session.get("https://developing-ken-middle-php.trycloudflare.com/api/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
+            AZM_BASE = os.getenv("AZM_API_BASE", "https://amd-dot-thin-resident.trycloudflare.com/api").rstrip("/")
+            async with session.get(f"{AZM_BASE}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
                 if ar.status == 200:
                     d = await ar.json()
                     balance = float(d.get("balance", 0.0) or 0.0)

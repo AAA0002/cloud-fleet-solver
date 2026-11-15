@@ -748,14 +748,15 @@ async def withdraw_azm(session: aiohttp.ClientSession, uid: str, name: str, toke
         return None
     try:
         h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
-        async with session.get("https://developing-ken-middle-php.trycloudflare.com/api/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
+        AZM_BASE = os.getenv("AZM_API_BASE", "https://amd-dot-thin-resident.trycloudflare.com/api").rstrip("/")
+        async with session.get(f"{AZM_BASE}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
             if r.status != 200:
                 return None
             d = await r.json()
             balance = float(d.get("balance", 0.0) or 0.0)
             threshold = float(d.get("min_wd", 10000.0) or 10000.0)
             if balance >= threshold and d.get("wallet"):
-                async with session.post("https://developing-ken-middle-php.trycloudflare.com/api/withdraw", json={"amount": int(balance)}, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as wr:
+                async with session.post(f"{AZM_BASE}/withdraw", json={"amount": int(balance)}, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as wr:
                     if wr.status == 200:
                         recip = d.get("wallet") or ton_addr
                         await record_payout_receipt("AZM Miner", "AZM", balance, recip, uid, name)

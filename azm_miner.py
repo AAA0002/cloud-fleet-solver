@@ -6,8 +6,8 @@ Autonomous Mining Engine & Harvester for AZM Miner (@AZMIR_Miner_BOT)
 =============================================================================
 Protocol Specifications:
   - Bot: @AZMIR_Miner_BOT (AZM Miner GRAM)
-  - WebApp Base: https://developing-ken-middle-php.trycloudflare.com/
-  - Upstream API: https://developing-ken-middle-php.trycloudflare.com/api
+  - WebApp Base: https://amd-dot-thin-resident.trycloudflare.com/
+  - Upstream API: https://amd-dot-thin-resident.trycloudflare.com/api
   - Base Mining Speed: 15.0 AZM/hour (360.0 AZM/day at Level 1)
   - Currency: AZM Token (GRAM / TON Ecosystem)
   - Referral System: 250 AZM per invited friend who connects a wallet (Ref: 6727787768)
