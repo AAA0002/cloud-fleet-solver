@@ -98,11 +98,11 @@ OFFICIAL_USERNAMES: Set[str] = {
     # System & Admin Bots
     "myagyai", "my_router_ai_bot", "aaapremiumappsbot", "aaagmailbot", "aaa_instant_mail_bot",
     "botfather", "spambot", "stickers", "telegram",
-    # Active 12 Legitimate Mining Bots & Official Channels
+    # Active 13 Legitimate Mining Bots & Official Channels
     "atfminers_bot", "atf_airdrop_bot", "kynex_miningbot", "pepe_gram_bot",
     "adxearnaibot", "adxearnai", "chickenlandbot", "earnvaultapp_bot", "earnvaulte", "mexoearni_bot",
     "myageapp", "appmyage", "lifetime_energy_bot", "jvaultminerbot", "tavoranode_bot",
-    "victors_company_bot", "web3primeteam", "solanamemes001",
+    "victors_company_bot", "azmir_miner_bot", "azmir_channel", "azmir_chat", "azmir_group", "web3primeteam", "solanamemes001",
     # Official Communities & Channels
     "aaaautominer", "aaaautomining", "aaa_activity", "rootofhunter_top",
     "androforever_oficial", "theboss_victor", "victors_company", "vicwithdrawals",
