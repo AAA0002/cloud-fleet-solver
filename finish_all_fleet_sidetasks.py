@@ -1192,29 +1192,23 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
         except Exception as pe:
             logger.debug(f"[{name}] Promo auto-apply note: {pe}")
 
-        # 6.6 Rewarded Ad Watch & Free Hen Claim ("ads10")
+        # 6.6 Rewarded Ad Watch & Free Hen Claim ("ads10") - Max 1 ad per 2h cycle
         ads_info = me_resp.get("result", {}).get("ads")
         if ads_info and isinstance(ads_info, dict):
             n_ads = int(ads_info.get("n", 0) or 0)
             need_ads = int(ads_info.get("need", 10) or 10)
-            while n_ads < need_ads:
+            if n_ads < need_ads:
                 try:
                     ad_st = await rpc("/api/ad/start", {})
                     if ad_st.get("ok"):
-                        await asyncio.sleep(15.5)
+                        await asyncio.sleep(2.0)
                         ad_done = await rpc("/api/ad/done", {})
                         if ad_done.get("ok"):
                             res["tasks_claimed"] += 1
                             n_ads = ad_done.get("result", {}).get("n", n_ads + 1)
                             res["notes"].append(f"ad_watched_{n_ads}/{need_ads}")
-                        else:
-                            break
-                    else:
-                        break
                 except Exception as ad_err:
                     logger.debug(f"[{name}] Chicken Land ad note: {ad_err}")
-                    break
-                await asyncio.sleep(1.0)
 
             if n_ads >= need_ads and "ads10" not in completed_tasks:
                 try:
@@ -1422,7 +1416,8 @@ async def sweep_mexoearn_tasks(session: aiohttp.ClientSession, uid: str, name: s
                 ad_stat = await r.json()
                 watched = ad_stat.get("watchedToday", 0)
                 limit = ad_stat.get("dailyLimit", 10)
-                while watched < limit:
+                # Watch at most 1 ad per 2h cycle
+                if watched < limit:
                     async with session.post("https://mexoearn.xyz/api/ads/claim", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
                         if ar.status == 200:
                             ad_res = await ar.json()
@@ -1431,10 +1426,6 @@ async def sweep_mexoearn_tasks(session: aiohttp.ClientSession, uid: str, name: s
                                 res["tasks_claimed"] += 1
                                 res["notes"].append(f"ad_w{watched}")
                                 await asyncio.sleep(0.3)
-                            else:
-                                break
-                        else:
-                            break
 
         # 2. Multi-network ads (adsgram, monetag, gigapub)
         async with session.get("https://mexoearn.xyz/api/ad-networks", headers=auth_h, timeout=aiohttp.ClientTimeout(total=5)) as r:
@@ -1472,7 +1463,7 @@ async def sweep_mexoearn_tasks(session: aiohttp.ClientSession, uid: str, name: s
                                 if st_d.get("ok"):
                                     started.append(code)
                     if started:
-                        await asyncio.sleep(15.5)
+                        await asyncio.sleep(2.0)
                         for code in started:
                             async with session.post(f"https://mexoearn.xyz/api/ad-networks/{code}/claim", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=5)) as cl_r:
                                 if cl_r.status == 200:
@@ -2547,8 +2538,8 @@ async def main():
         tokens_db = await fetch_all_tokens(session)
         logger.info(f"Loaded tokens for {len(tokens_db)} accounts from Upstash Redis.")
 
-        # Semaphore of 3 to avoid hammering APIs while maintaining fast speed
-        sem = asyncio.Semaphore(3)
+        # Concurrency semaphore of 5 to balance speed and stability
+        sem = asyncio.Semaphore(5)
         tasks = [process_account(session, acc, tokens_db, sem) for acc in ACCOUNTS]
         reports = await asyncio.gather(*tasks)
 
