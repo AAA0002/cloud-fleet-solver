@@ -116,13 +116,31 @@ def send_tg_alert(text: str):
             logger.warning(f"Failed to send Telegram alert to {chat_id}: {e}")
 
 
+def robust_json_loads(val):
+    """Recursively unpack double/triple-serialized JSON strings safely into Python objects."""
+    for _ in range(4):
+        if isinstance(val, str):
+            val = val.strip()
+            if (val.startswith("{") and val.endswith("}")) or (val.startswith("[") and val.endswith("]")) or (val.startswith('\"') and val.endswith('\"')):
+                try:
+                    val = json.loads(val)
+                except Exception:
+                    break
+            else:
+                break
+        else:
+            break
+    return val
+
+
 def load_fleet_ton_wallets() -> dict:
     """Fetch fleet TON wallets from local JSON or Upstash Redis."""
     local_path = os.path.join(BASE_DIR, "fleet_ton_wallets.json")
     if os.path.exists(local_path):
         try:
             with open(local_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                d = json.load(f)
+                return d if isinstance(d, dict) else {}
         except Exception:
             pass
 
@@ -136,7 +154,8 @@ def load_fleet_ton_wallets() -> dict:
                 data = json.loads(resp.read().decode())
                 res = data.get("result")
                 if res:
-                    return json.loads(res) if isinstance(res, str) else res
+                    d = robust_json_loads(res)
+                    return d if isinstance(d, dict) else {}
         except Exception as e:
             logger.warning(f"Error fetching TON wallets from Upstash Redis: {e}")
     return {}
@@ -148,7 +167,8 @@ def load_all_miniapp_tokens() -> dict:
     if os.path.exists(local_path):
         try:
             with open(local_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                d = json.load(f)
+                return d if isinstance(d, dict) else {}
         except Exception:
             pass
 
@@ -162,7 +182,8 @@ def load_all_miniapp_tokens() -> dict:
                 data = json.loads(resp.read().decode())
                 res = data.get("result")
                 if res:
-                    return json.loads(res) if isinstance(res, str) else res
+                    d = robust_json_loads(res)
+                    return d if isinstance(d, dict) else {}
         except Exception:
             pass
     return {}
@@ -181,7 +202,8 @@ def get_token_from_upstash(uid: int) -> dict:
             data = json.loads(resp.read().decode())
             res = data.get("result")
             if res:
-                return json.loads(res) if isinstance(res, str) else res
+                d = robust_json_loads(res)
+                return d if isinstance(d, dict) else {}
     except Exception as e:
         logger.warning(f"Upstash token fetch warning for UID {uid}: {e}")
     return {}
@@ -200,7 +222,7 @@ def get_victors_pass_from_upstash(uid: int) -> str:
             data = json.loads(resp.read().decode())
             res = data.get("result")
             if res:
-                d = json.loads(res) if isinstance(res, str) else res
+                d = robust_json_loads(res)
                 if isinstance(d, dict):
                     return d.get("humanPass")
                 elif isinstance(d, str):
@@ -442,11 +464,22 @@ def run_pipeline_for_account(uid: int, v_init: str, human_pass: str, is_master: 
 def sweep_master_bonuses(master_uid: int):
     """Sweeps recruitment hiring bonus (+100 V per qualified recruit) for Master Account."""
     tok_dict = get_token_from_upstash(master_uid)
+    if not isinstance(tok_dict, dict):
+        tok_dict = robust_json_loads(tok_dict)
+    if not isinstance(tok_dict, dict):
+        tok_dict = {}
+
     v_init = tok_dict.get("victors_init_data")
     if not v_init:
         miniapp_all = load_all_miniapp_tokens()
-        if str(master_uid) in miniapp_all:
-            v_init = miniapp_all[str(master_uid)].get("victors_init_data")
+        if not isinstance(miniapp_all, dict):
+            miniapp_all = robust_json_loads(miniapp_all)
+        if isinstance(miniapp_all, dict) and str(master_uid) in miniapp_all:
+            m_data = miniapp_all.get(str(master_uid)) or {}
+            if not isinstance(m_data, dict):
+                m_data = robust_json_loads(m_data)
+            if isinstance(m_data, dict):
+                v_init = m_data.get("victors_init_data")
 
     if not v_init:
         logger.info(f"👑 Master UID {master_uid}: Referral link {VICTORS_REF} is active.")
@@ -477,16 +510,34 @@ def solve_victors_with_seleniumbase():
         return
 
     ton_wallets = load_fleet_ton_wallets()
+    if not isinstance(ton_wallets, dict):
+        ton_wallets = robust_json_loads(ton_wallets)
+    if not isinstance(ton_wallets, dict):
+        ton_wallets = {}
+
     miniapp_all = load_all_miniapp_tokens()
+    if not isinstance(miniapp_all, dict):
+        miniapp_all = robust_json_loads(miniapp_all)
+    if not isinstance(miniapp_all, dict):
+        miniapp_all = {}
     raw_accounts = []
 
     for uid in FLEET_UIDS:
         tok_dict = get_token_from_upstash(uid)
+        if not isinstance(tok_dict, dict):
+            tok_dict = robust_json_loads(tok_dict)
+        if not isinstance(tok_dict, dict):
+            tok_dict = {}
+
         vic_init = tok_dict.get("victors_init_data")
         name = tok_dict.get("name")
         if not vic_init and str(uid) in miniapp_all:
-            vic_init = miniapp_all[str(uid)].get("victors_init_data")
-            name = miniapp_all[str(uid)].get("name")
+            acc_extra = miniapp_all.get(str(uid), {})
+            if not isinstance(acc_extra, dict):
+                acc_extra = robust_json_loads(acc_extra)
+            if isinstance(acc_extra, dict):
+                vic_init = acc_extra.get("victors_init_data")
+                name = acc_extra.get("name")
         name = name or f"UID {uid}"
         if vic_init:
             raw_accounts.append({
