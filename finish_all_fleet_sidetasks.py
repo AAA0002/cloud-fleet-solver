@@ -1198,21 +1198,22 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
             res["notes"].append(f"ref_coins_{ref_amt}")
             current_coins += ref_amt
 
-        # 8. Buy hens if coins >= 1000
-        if current_coins >= 1000:
+        # 8. Buy hens if coins >= 1000 (workers only, never on Master Account)
+        if str(uid) != str(MASTER_UID) and current_coins >= 1000:
             n_buy = int(current_coins // 1000)
             buy_res = await rpc("/api/buy", {"breed": "basic", "n": n_buy})
             if buy_res.get("ok"):
                 res["notes"].append(f"hens_bought_{n_buy}")
                 current_coins -= (n_buy * 1000)
 
-        # 9. Upgrade basket if affordable
-        try:
-            upg_res = await rpc("/api/upgrade", {})
-            if upg_res.get("ok"):
-                res["notes"].append("basket_upgraded")
-        except Exception:
-            pass
+        # 9. Upgrade basket if affordable (workers only, never on Master Account)
+        if str(uid) != str(MASTER_UID):
+            try:
+                upg_res = await rpc("/api/upgrade", {})
+                if upg_res.get("ok"):
+                    res["notes"].append("basket_upgraded")
+            except Exception:
+                pass
 
         # 10. Auto-withdraw for ANY account to dedicated TON wallet if not used today
         try:
