@@ -765,6 +765,53 @@ async def withdraw_azm(session: aiohttp.ClientSession, uid: str, name: str, toke
         pass
     return None
 
+
+async def withdraw_dillo(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
+    """Dillo Miner: Request TON Jetton withdrawal when balance >= 2,400,000 DILLO and window is open."""
+    dillo_init = tokens.get("dillo_init_data") or tokens.get("dillo")
+    if not dillo_init:
+        return None
+    try:
+        raw_init = dillo_init
+        if "tgWebAppData=" in raw_init:
+            raw_init = raw_init.split("tgWebAppData=")[1].split("&")[0]
+            raw_init = urllib.parse.unquote(raw_init)
+            
+        h = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36",
+            "Origin": "https://dillo-miner-bot.ih0st.app",
+            "Referer": "https://dillo-miner-bot.ih0st.app/"
+        }
+        async with session.post("https://dillo-miner-bot.ih0st.app/api/app/call",
+                                json={"initData": raw_init, "event": "state", "data": {}},
+                                headers=h,
+                                timeout=aiohttp.ClientTimeout(total=5)) as r:
+            if r.status != 200:
+                return None
+            d = await r.json()
+            if not d.get("ok"):
+                return None
+            user_data = d.get("data", {}).get("me", {}) or d.get("data", {}).get("user", {})
+            pool_bal = float(user_data.get("pool", 0.0) or 0.0)
+            threshold = 2400000.0  # Min withdrawal threshold
+            withdraw_open_ts = 1795161600  # 2026-11-20 08:00 UTC
+            now_ts = int(time.time())
+            
+            if pool_bal >= threshold and now_ts >= withdraw_open_ts and ton_addr:
+                async with session.post("https://dillo-miner-bot.ih0st.app/api/app/call",
+                                        json={"initData": raw_init, "event": "withdraw", "data": {"address": ton_addr, "amount": pool_bal}},
+                                        headers=h,
+                                        timeout=aiohttp.ClientTimeout(total=8)) as wr:
+                    if wr.status == 200:
+                        wd = await wr.json()
+                        if wd.get("ok"):
+                            await record_payout_receipt("Dillo Miner", "DILLO", pool_bal, ton_addr, uid, name)
+                            return {"protocol": "Dillo Miner", "amount": pool_bal, "symbol": "DILLO", "recipient": ton_addr}
+    except Exception:
+        pass
+    return None
+
 # =============================================================================
 # UNIVERSAL FLEET AUTO-WITHDRAWAL EXECUTION PIPELINE
 # =============================================================================
@@ -890,6 +937,13 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
             results["total_withdrawn_count"] += 1
             results["receipts"].append(azm_res)
             results["by_protocol"]["AZM Miner"] = results["by_protocol"].get("AZM Miner", 0) + 1
+
+        # 14. Dillo Miner (>= 2,400,000 DILLO to dedicated TON wallet)
+        dillo_res = await withdraw_dillo(session, uid, name, tokens, ton_addr)
+        if dillo_res:
+            results["total_withdrawn_count"] += 1
+            results["receipts"].append(dillo_res)
+            results["by_protocol"]["Dillo Miner"] = results["by_protocol"].get("Dillo Miner", 0) + 1
 
     print(f"\n🎉 Universal Auto-Withdrawal Sweep Completed: {results['total_withdrawn_count']} Payouts Executed!")
     for proto, cnt in results["by_protocol"].items():

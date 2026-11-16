@@ -218,7 +218,9 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
             data.get("victors_init_data"),
             data.get("kynex_init_data"),
             data.get("chickenland_init_data"),
-            data.get("jvault_init_data")
+            data.get("jvault_init_data"),
+            data.get("azm_init_data"),
+            data.get("dillo_init_data")
         ]
 
         min_auth_date = 0
@@ -259,6 +261,8 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
             "has_victors": bool(data.get("victors_init_data")),
             "has_jvault": bool(data.get("jvault_init_data")),
             "has_tavora": bool(data.get("tavora_init_data")),
+            "has_azm": bool(data.get("azm_init_data")),
+            "has_dillo": bool(data.get("dillo_init_data")),
             "name": data.get("name", "Unknown")
         }
     except Exception as e:
@@ -269,9 +273,10 @@ def trigger_cloud_token_refresh(render_node: str) -> bool:
     """Trigger the autonomous token collection engine (100% Free Cloud Native Architecture)."""
     print("🚀 Initiating Cloud Token Refresh (100% Free GitHub & Cloudflare Architecture)...")
 
-    # 1. Native Cloud Runner Execution (Direct on GitHub Actions or VM with Zero Bandwidth Costs)
+    # 1. Native Cloud Runner Execution (Direct on GitHub Actions or Cloud Runner VM with Zero Phone Overhead)
     refresher_path = os.path.join(BASE_DIR, "refresh_cloud_tokens.py")
-    if os.path.exists(refresher_path):
+    is_cloud_runner = os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("ALLOW_LOCAL_MTPROTO") == "1"
+    if is_cloud_runner and os.path.exists(refresher_path):
         print(f"⚡ Running native cloud token refresher: {refresher_path}...")
         try:
             import subprocess

@@ -2729,6 +2729,7 @@ async def main():
         tav_tot = sum(r["results"].get("tavora", {}).get("tasks_claimed", 0) for r in reports)
         vic_tot = sum(r["results"].get("victors", {}).get("tasks_claimed", 0) for r in reports)
         azm_tot = sum(r["results"].get("azm", {}).get("tasks_claimed", 0) for r in reports)
+        dillo_tot = sum(r["results"].get("dillo", {}).get("tasks_claimed", 0) for r in reports)
         elapsed = time.time() - t_start
 
         if bot_token and notif_channel:
@@ -2736,7 +2737,7 @@ async def main():
                 f"⚡ <b>Fleet 14-Bot Auto-Harvest Complete</b>\n"
                 f"• <b>Accounts Farmed:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code>\n"
                 f"• <b>Tasks & Rewards Claimed:</b> <code>{total_tasks} Total Claimed</code>\n"
-                f"• <b>Active Protocols (13/13):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • JV:{jv_tot} • TVR:{tav_tot} • VIC:{vic_tot} • AZM:{azm_tot}</code>\n"
+                f"• <b>Active Protocols (14/14):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • JV:{jv_tot} • TVR:{tav_tot} • VIC:{vic_tot} • AZM:{azm_tot} • DIL:{dillo_tot}</code>\n"
                 f"• <b>Duration:</b> <code>{elapsed:.1f}s</code> | <b>Node:</b> <code>GitHub Actions Cloud Runner & Edge Mesh</code>\n"
                 f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
             )

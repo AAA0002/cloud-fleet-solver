@@ -4,7 +4,7 @@ scripts/maintenance/audit_withdrawal_readiness.py
 =============================================================================
 Universal Fleet Withdrawal Readiness Auditor & Automated Cashout Sentinel
 =============================================================================
-Audits live balances across ALL 23 fleet accounts for all 13 active mining protocols
+Audits live balances across ALL 23 fleet accounts for all 14 active mining protocols
 against official, ground-truth payout thresholds:
 
 1. Chicken Land: Dynamic threshold (minUsd $0.1043 / eggUsd ~15,019 eggs = 0.1001 GRAM)
@@ -20,6 +20,7 @@ against official, ground-truth payout thresholds:
 11. Victor's Company: Shifts & 10% crew mining commissions swept to Master Account
 12. TAVORA Node: Daily node sign-in dividends & lottery yields swept to balance
 13. AZM Miner: >= 10,000 AZM -> On-chain TON withdrawal to dedicated TON wallet
+14. Dillo Miner: >= 2,400,000 DILLO -> Jetton withdrawal to dedicated TON wallet
 
 Complies with:
 - Rule 4: Zero Phone Load Directive (100% Cloud Execution)
@@ -152,6 +153,13 @@ WITHDRAWAL_THRESHOLDS = {
         "threshold": 10000.0,
         "action": "Withdraw AZM via /api/withdraw to dedicated TON wallet",
         "unit": "AZM"
+    },
+    "dillo": {
+        "name": "Dillo Miner",
+        "symbol": "DILLO",
+        "threshold": 2400000.0,
+        "action": "Withdraw DILLO via Jetton to bound TON wallet",
+        "unit": "DILLO"
     }
 }
 
@@ -489,6 +497,39 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
         except Exception:
             pass
 
+    # 14. Dillo Miner
+    dillo_init = tokens.get("dillo_init_data") or tokens.get("dillo")
+    if dillo_init:
+        try:
+            h = {
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36",
+                "Origin": "https://dillo-miner-bot.ih0st.app",
+                "Referer": "https://dillo-miner-bot.ih0st.app/"
+            }
+            raw_init = dillo_init
+            if "tgWebAppData=" in raw_init:
+                raw_init = raw_init.split("tgWebAppData=")[1].split("&")[0]
+                raw_init = urllib.parse.unquote(raw_init)
+            async with session.post("https://dillo-miner-bot.ih0st.app/api/app/call",
+                                    json={"initData": raw_init, "event": "state", "data": {}},
+                                    headers=h,
+                                    timeout=aiohttp.ClientTimeout(total=5)) as dr:
+                if dr.status == 200:
+                    d = await dr.json()
+                    user_data = d.get("data", {}).get("me", {}) or d.get("data", {}).get("user", {})
+                    balance = float(user_data.get("pool", 0.0) or 0.0) + float(user_data.get("pending", 0.0) or 0.0)
+                    threshold = WITHDRAWAL_THRESHOLDS["dillo"]["threshold"]
+                    is_ready = balance >= threshold
+                    report["protocols"]["dillo"] = {
+                        "balance": balance, "threshold": threshold, "unit": "DILLO",
+                        "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1)) if threshold > 0 else 0
+                    }
+                    if is_ready:
+                        report["ready_to_withdraw"].append(("dillo", balance, "DILLO"))
+        except Exception:
+            pass
+
     return report
 
 
@@ -496,7 +537,7 @@ async def run_audit_and_sweep(execute_sweep: bool = False, notify: bool = True):
     """Execute complete withdrawal readiness audit and optional sweep."""
     accounts = load_accounts()
     print("=" * 75)
-    print("📊 AAA AUTO FLEET — WITHDRAWAL READINESS AUDITOR (13 BOTS)")
+    print("📊 AAA AUTO FLEET — WITHDRAWAL READINESS AUDITOR (14 BOTS)")
     print(f"Auditing {len(accounts)} Accounts against Ground-Truth Thresholds...")
     print("=" * 75)
 
