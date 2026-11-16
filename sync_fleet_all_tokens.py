@@ -13,6 +13,7 @@ Synchronizes all 11 bot initData tokens across all 23 accounts between:
 """
 
 import os
+import re
 import json
 import time
 import urllib.request
@@ -49,7 +50,10 @@ TARGET_BOTS = [
     "myage",
     "lifetime",
     "jvault",
-    "tavora"
+    "tavora",
+    "victors",
+    "azm",
+    "dillo"
 ]
 
 EXCLUDED_UIDS = {"8881914294", "tokens"}
@@ -70,6 +74,14 @@ TOKEN_KEYS = [
     "jvault_user_id",
     "tavora_init_data",
     "tavora_token",
+    "victors_init_data",
+    "victors_human_pass",
+    "azm_init_data",
+    "azm",
+    "azmir_init_data",
+    "azmir",
+    "dillo_init_data",
+    "dillo",
     # Aliases
     "pepe_init_data",
     "adx_init_data",
@@ -78,6 +90,33 @@ TOKEN_KEYS = [
     "mexoearn_init_data",
     "myageapp_init_data"
 ]
+
+
+def get_token_timestamp(val) -> int:
+    """Extracts auth_date UNIX timestamp from WebApp token string for freshness comparison."""
+    if not val or not isinstance(val, str):
+        return 0
+    m = re.search(r"auth_date(?:%3D|=)(\d+)", val)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            pass
+    return 1
+
+
+def pick_best_token(*candidates) -> str:
+    """Selects the candidate token with the highest (freshest) auth_date timestamp."""
+    best_val = ""
+    best_ts = -1
+    for c in candidates:
+        if not c or not isinstance(c, str):
+            continue
+        ts = get_token_timestamp(c)
+        if ts > best_ts:
+            best_ts = ts
+            best_val = c
+    return best_val
 
 def upstash_get(key: str):
     if not UPSTASH_URL or not UPSTASH_TOKEN:
@@ -246,12 +285,12 @@ def main():
         m_tok = m_tok if isinstance(m_tok, dict) else (json.loads(m_tok) if isinstance(m_tok, str) and m_tok.startswith("{") else {})
         fmt_tok = fmt_tok if isinstance(fmt_tok, dict) else (json.loads(fmt_tok) if isinstance(fmt_tok, str) and fmt_tok.startswith("{") else {})
 
-        # Merge tokens: prefer redis_tok, fallback to acc, fallback to m_tok, fallback to fmt_tok
+        # Merge tokens: select freshest token based on auth_date timestamp
         merged_tokens = {}
 
-        # First collect all token fields
+        # Collect all token fields, selecting newest token across local, redis, and mesh
         for k in TOKEN_KEYS:
-            val = redis_tok.get(k) or acc.get(k) or m_tok.get(k) or fmt_tok.get(k)
+            val = pick_best_token(fmt_tok.get(k), redis_tok.get(k), acc.get(k), m_tok.get(k))
             if val:
                 merged_tokens[k] = val
 
@@ -285,6 +324,16 @@ def main():
             merged_tokens["lifetime_init_data"] = merged_tokens["lifetime_energy_init_data"]
         elif merged_tokens.get("lifetime_init_data") and not merged_tokens.get("lifetime_energy_init_data"):
             merged_tokens["lifetime_energy_init_data"] = merged_tokens["lifetime_init_data"]
+
+        if merged_tokens.get("azm_init_data") and not merged_tokens.get("azm"):
+            merged_tokens["azm"] = merged_tokens["azm_init_data"]
+        elif merged_tokens.get("azm") and not merged_tokens.get("azm_init_data"):
+            merged_tokens["azm_init_data"] = merged_tokens["azm"]
+
+        if merged_tokens.get("dillo_init_data") and not merged_tokens.get("dillo"):
+            merged_tokens["dillo"] = merged_tokens["dillo_init_data"]
+        elif merged_tokens.get("dillo") and not merged_tokens.get("dillo_init_data"):
+            merged_tokens["dillo_init_data"] = merged_tokens["dillo"]
 
         name = acc.get("name") or redis_tok.get("name") or m_tok.get("name") or fmt_tok.get("name") or f"Account_{uid}"
         phone = acc.get("phone") or redis_tok.get("phone") or m_tok.get("phone") or fmt_tok.get("phone") or ""
@@ -370,11 +419,11 @@ def main():
 
     # 9. Audit and verify final state
     print("\n" + "=" * 70)
-    print("📊 FINAL VERIFICATION: 11-BOT COVERAGE AUDIT")
+    print("📊 FINAL VERIFICATION: 14-BOT COVERAGE AUDIT")
     print("=" * 70)
     for bot in TARGET_BOTS:
-        acc_c = sum(1 for a in updated_accs if a.get(f"{bot}_init_data") or a.get(f"{bot}_token"))
-        miniapp_c = sum(1 for uid, d in master_miniapp_tokens.items() if d.get(f"{bot}_init_data") or d.get(f"{bot}_token"))
+        acc_c = sum(1 for a in updated_accs if a.get(f"{bot}_init_data") or a.get(f"{bot}_token") or a.get(bot))
+        miniapp_c = sum(1 for uid, d in master_miniapp_tokens.items() if d.get(f"{bot}_init_data") or d.get(f"{bot}_token") or d.get(bot))
         status = "✅" if acc_c >= 21 and miniapp_c >= 21 else "⚠️"
         print(f"  {status} {bot:12}: accounts.json={acc_c}/{len(updated_accs)} | miniapp_tokens={miniapp_c}/{len(updated_accs)}")
 
