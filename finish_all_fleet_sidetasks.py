@@ -252,6 +252,46 @@ def create_atf_ton_proof(wallet_entry: dict, nonce: str) -> dict:
         return None
 
 
+def create_dillo_ton_proof(wallet_entry: dict, nonce: str) -> dict:
+    """Signs TonConnect 2.0 cryptographic proof for Dillo Miner wallet linking."""
+    try:
+        from nacl.signing import SigningKey
+        from tonsdk.contract.wallet import Wallets, WalletVersionEnum
+        raw_mn = wallet_entry.get("mnemonic") or wallet_entry.get("mnemonic_words")
+        words = raw_mn.split() if isinstance(raw_mn, str) else raw_mn
+        if not words or len(words) != 24:
+            return None
+        _, pub_k, priv_k, wallet_contract = Wallets.from_mnemonics(mnemonics=words, version=WalletVersionEnum.v4r2)
+        state_init_res = wallet_contract.create_state_init()
+        state_init_b64 = base64.b64encode(state_init_res["state_init"].to_boc(False)).decode("utf-8")
+        t_addr = wallet_contract.address
+        wc = t_addr.wc
+        addr_hash = t_addr.hash_part
+        raw_addr = f"{wc}:{addr_hash.hex()}"
+        domain = "dillo-miner-bot.ih0st.app"
+        domain_b = domain.encode("utf-8")
+        ts_now = int(time.time())
+        msg = b"ton-proof-item-v2/" + struct.pack(">i", wc) + addr_hash + struct.pack("<I", len(domain_b)) + domain_b + struct.pack("<Q", ts_now) + nonce.encode("utf-8")
+        digest = hashlib.sha256(b"\xff\xff" + b"ton-connect" + hashlib.sha256(msg).digest()).digest()
+        sig = SigningKey(priv_k[:32]).sign(digest).signature
+        sig_b64 = base64.b64encode(sig).decode("utf-8")
+        return {
+            "address": raw_addr,
+            "network": "-239",
+            "public_key": pub_k.hex(),
+            "state_init": state_init_b64,
+            "proof": {
+                "timestamp": ts_now,
+                "domain": {"lengthBytes": len(domain_b), "value": domain},
+                "signature": sig_b64,
+                "payload": nonce
+            }
+        }
+    except Exception as e:
+        logger.debug(f"Dillo proof creation error: {e}")
+        return None
+
+
 def solve_atf_math(question_text: str) -> str:
     """100% local, instant, deterministic arithmetic & challenge solver (0 network latency, 0 AI dependency)."""
     if not question_text:
@@ -2522,7 +2562,49 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
                     if gain > 0:
                         res["notes"].append(f"tap_+{gain:.2f}")
 
-        # 4. Harvest Mining Collect
+        # 4. Check & Link Wallet via TonConnect 2.0 Proof (if 24-word wallet present)
+        try:
+            w_obj = ton_wallets.get(uid) or {}
+            raw_mn = w_obj.get("mnemonic") or w_obj.get("mnemonic_words")
+            words = raw_mn.split() if isinstance(raw_mn, str) else (raw_mn or [])
+            if len(words) == 24 and not acc.get("dillo_wallet_linked"):
+                async with session.post(url, json={"initData": raw_init, "event": "wallet_payload", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r_wp:
+                    if r_wp.status == 200:
+                        wp_res = await r_wp.json()
+                        nonce = wp_res.get("data", {}).get("payload")
+                        if nonce:
+                            proof_data = create_dillo_ton_proof(w_obj, nonce)
+                            if proof_data:
+                                async with session.post(url, json={"initData": raw_init, "event": "wallet_link", "data": proof_data}, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as r_wl:
+                                    if r_wl.status == 200:
+                                        wl_res = await r_wl.json()
+                                        if wl_res.get("data", {}).get("linked"):
+                                            acc["dillo_wallet_linked"] = True
+                                            res["notes"].append("ton_wallet_linked")
+        except Exception as we:
+            logger.debug(f"[{uid}] Dillo wallet link error: {we}")
+
+        # 5. Discover & Claim solvable tasks (e.g. LynxMineBot)
+        try:
+            async with session.post(url, json={"initData": raw_init, "event": "tasks", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r_t:
+                if r_t.status == 200:
+                    t_res = await r_t.json()
+                    t_items = t_res.get("data", {}).get("items", [])
+                    for t_item in t_items:
+                        if not t_item.get("done") and t_item.get("kind") == "bot":
+                            t_id = t_item.get("id")
+                            await session.post(url, json={"initData": raw_init, "event": "task_start", "data": {"id": t_id}}, headers=h, timeout=aiohttp.ClientTimeout(total=5))
+                            await asyncio.sleep(8)
+                            async with session.post(url, json={"initData": raw_init, "event": "task_claim", "data": {"id": t_id}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r_tc:
+                                if r_tc.status == 200:
+                                    tc_res = await r_tc.json()
+                                    if tc_res.get("data", {}).get("ok"):
+                                        res["tasks_claimed"] += 1
+                                        res["notes"].append(f"task_{t_id}")
+        except Exception:
+            pass
+
+        # 6. Harvest Mining Collect
         await asyncio.sleep(0.3)
         async with session.post(url, json={"initData": raw_init, "event": "collect", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
             if r.status == 200:
@@ -2533,7 +2615,7 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
                         res["tasks_claimed"] += 1
                         res["notes"].append(f"harvest_+{col:.2f}")
 
-        # 5. Get full state
+        # 7. Get full state
         await asyncio.sleep(0.3)
         async with session.post(url, json={"initData": raw_init, "event": "state", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
             if r.status == 200:
