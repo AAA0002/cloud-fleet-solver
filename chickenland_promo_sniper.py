@@ -260,6 +260,19 @@ def is_code_claimed(code: str) -> bool:
         pass
     return False
 
+def is_code_fully_claimed_by_fleet(code: str, fleet_uids: Optional[List[str]] = None) -> bool:
+    """Checks if all fleet accounts have already claimed this specific promo code."""
+    code = code.strip().upper()
+    if not fleet_uids:
+        fleet_uids = list(CACHED_FLEET_TOKENS.keys()) if CACHED_FLEET_TOKENS else []
+    if not fleet_uids:
+        return is_code_claimed(code)
+    for uid in fleet_uids:
+        claimed_set = ACCOUNT_CLAIMED_CODES.get(str(uid), set())
+        if code not in claimed_set:
+            return False
+    return True
+
 def is_code_exhausted(code: str) -> bool:
     code = code.strip().upper()
     if code in EXHAUSTED_CODES:
@@ -475,33 +488,34 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             pass
 
-    # 2. Check individual keys `fleet:tokens:{uid}` and `fleet:tokens:{uid}:chickenland_init_data` for fresh cloud tokens
-    for acc in accounts_list:
-        uid = str(acc.get("user_id", ""))
-        if uid == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
-            continue
-        if uid and UPSTASH_URL and UPSTASH_TOKEN:
-            try:
-                res = redis_command("GET", f"fleet:tokens:{uid}")
-                if res:
-                    u_toks = json.loads(res) if isinstance(res, str) else res
-                    while isinstance(u_toks, str):
-                        try:
-                            u_toks = json.loads(u_toks)
-                        except Exception:
-                            break
-                    if isinstance(u_toks, dict):
-                        tok = u_toks.get("chickenland_init_data") or u_toks.get("chicken_init_data")
-                        if tok:
-                            update_token(uid, tok)
-            except Exception:
-                pass
-            try:
-                res_ind = redis_command("GET", f"fleet:tokens:{uid}:chickenland_init_data")
-                if res_ind and isinstance(res_ind, str) and not res_ind.startswith("{"):
-                    update_token(uid, res_ind)
-            except Exception:
-                pass
+    # 2. Check individual keys ONLY if miniapp_tokens was missing accounts (< 20)
+    if len(fleet) < 20 and accounts_list:
+        for acc in accounts_list:
+            uid = str(acc.get("user_id", ""))
+            if uid == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
+                continue
+            if uid and UPSTASH_URL and UPSTASH_TOKEN:
+                try:
+                    res = redis_command("GET", f"fleet:tokens:{uid}")
+                    if res:
+                        u_toks = json.loads(res) if isinstance(res, str) else res
+                        while isinstance(u_toks, str):
+                            try:
+                                u_toks = json.loads(u_toks)
+                            except Exception:
+                                break
+                        if isinstance(u_toks, dict):
+                            tok = u_toks.get("chickenland_init_data") or u_toks.get("chicken_init_data")
+                            if tok:
+                                update_token(uid, tok)
+                except Exception:
+                    pass
+                try:
+                    res_ind = redis_command("GET", f"fleet:tokens:{uid}:chickenland_init_data")
+                    if res_ind and isinstance(res_ind, str) and not res_ind.startswith("{"):
+                        update_token(uid, res_ind)
+                except Exception:
+                    pass
 
     # 3. Fallback to accounts.json
     for acc in accounts_list:
@@ -632,7 +646,7 @@ async def redeem_single_account(
     }
 
     try:
-        async with session.post(RPC_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+        async with session.post(RPC_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10, connect=4)) as resp:
             data = None
             try:
                 data = await resp.json(content_type=None)
@@ -815,19 +829,30 @@ async def snipe_promo_fleet(
     followed by parallel background compounding (Wave 2: Hen Purchasing).
     """
     code = code.strip().upper()
-    if not force and (code in CLAIMED_CODES or code in EXHAUSTED_CODES or is_code_claimed(code) or is_code_exhausted(code)):
-        logger.info(f"[Sniper Fast-Path] Code {code} already processed in current state, skipping duplicate burst.")
-        return {
-            "ok": True,
-            "code": code,
-            "claimed_count": 0,
-            "total_coins": 0,
-            "hens_bought": 0,
-            "status": "ALREADY_PROCESSED"
-        }
+    if not force:
+        if code in EXHAUSTED_CODES or is_code_exhausted(code):
+            logger.info(f"[Sniper Fast-Path] Code {code} is exhausted, skipping.")
+            return {
+                "ok": True,
+                "code": code,
+                "claimed_count": 0,
+                "total_coins": 0,
+                "hens_bought": 0,
+                "status": "EXHAUSTED"
+            }
+        if is_code_fully_claimed_by_fleet(code, fleet_uids=list(CACHED_FLEET_TOKENS.keys()) if CACHED_FLEET_TOKENS else None):
+            logger.info(f"[Sniper Fast-Path] Code {code} already claimed by all fleet accounts, skipping duplicate burst.")
+            return {
+                "ok": True,
+                "code": code,
+                "claimed_count": 0,
+                "total_coins": 0,
+                "hens_bought": 0,
+                "status": "ALREADY_PROCESSED"
+            }
     async with BURST_LOCK:
         if not fleet or len(fleet) < 20:
-            fleet = load_fleet_tokens(force_refresh=True)
+            fleet = CACHED_FLEET_TOKENS if (CACHED_FLEET_TOKENS and len(CACHED_FLEET_TOKENS) >= 20) else load_fleet_tokens(force_refresh=False)
 
         if not fleet:
             return {"ok": False, "description": "No fleet tokens available"}
@@ -859,6 +884,31 @@ async def snipe_promo_fleet(
                         "latency_ms": 0,
                         "hen_bought": False
                     })
+
+            # Wave 1.5: Immediate fast retry wave for any accounts that hit a connection timeout/glitch
+            # Provided the code is NOT reported exhausted/full globally
+            any_exhausted = any(r.get("is_exhausted") or r.get("is_full") or r.get("is_expired") for r in results)
+            if not any_exhausted and any(r.get("ok") for r in results):
+                failed_uids = {
+                    r["uid"] for r in results
+                    if not r.get("ok") and not r.get("already_claimed") and "TIMEOUT" in str(r.get("code_status", ""))
+                }
+                if failed_uids:
+                    retry_accs = [fleet[u] for u in failed_uids if u in fleet]
+                    if retry_accs:
+                        logger.info(f"[Sniper Retry Wave] Retrying {len(retry_accs)} dropped accounts for {code}...")
+                        await asyncio.sleep(0.4)
+                        retry_tasks = [
+                            redeem_single_account(session, acc, code, auto_buy_hens=auto_buy_hens)
+                            for acc in retry_accs
+                        ]
+                        retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
+                        for r_new in retry_results:
+                            if isinstance(r_new, dict):
+                                for idx_res, r_old in enumerate(results):
+                                    if r_old.get("uid") == r_new.get("uid"):
+                                        results[idx_res] = r_new
+                                        break
 
             # Wave 2: Decoupled Autonomous Compounding (Background Expansion)
             # Hen purchasing runs concurrently AFTER code is already secured across all accounts
@@ -1340,6 +1390,9 @@ def is_sniper_already_running(threshold_seconds: float = 45.0) -> bool:
             hb = redis_command("GET", "fleet:chickenland_sniper:heartbeat")
             if hb:
                 data = json.loads(hb) if isinstance(hb, str) else hb
+                if data.get("status") in ("HANDOFF", "TERMINATED", "STOPPED"):
+                    logger.info(f"[Sniper Supervisor] Heartbeat indicates runner status '{data.get('status')}'. Clear to start successor.")
+                    return False
                 ts = float(data.get("timestamp", 0))
                 age = time.time() - ts
                 if age < threshold_seconds:
@@ -1387,16 +1440,42 @@ async def start_heartbeat_loop(max_runtime: float = 0.0):
             # 2. Check max runtime relay handoff (e.g. before 6h GitHub Actions runner cap)
             if max_runtime > 0 and uptime >= max_runtime:
                 logger.info(f"[Sniper Relay] Reached max runtime of {max_runtime}s (~{uptime/3600:.1f}h). Dispatching relay handoff to next cloud runner...")
+                handoff_hb = {
+                    "status": "HANDOFF",
+                    "timestamp": time.time(),
+                    "uptime_seconds": int(uptime),
+                    "relay_at": time.time()
+                }
+                if UPSTASH_URL and UPSTASH_TOKEN:
+                    try:
+                        redis_command("SET", "fleet:chickenland_sniper:heartbeat", json.dumps(handoff_hb), "EX", "30")
+                    except Exception:
+                        pass
                 try:
                     import subprocess
                     p = subprocess.run(["gh", "workflow", "run", "chickenland_sniper_runner.yml"], capture_output=True, text=True, timeout=15)
                     logger.info(f"[Sniper Relay] gh workflow run dispatched: exit={p.returncode}")
                 except Exception as e_gh:
                     logger.warning(f"[Sniper Relay] gh trigger note: {e_gh}")
-                # Wait 25s for next runner to spin up before exiting
-                await asyncio.sleep(25)
+                # Wait 15s for successor runner to initialize before terminating current runner
+                await asyncio.sleep(15)
+                if UPSTASH_URL and UPSTASH_TOKEN:
+                    try:
+                        redis_command("DEL", "fleet:chickenland_sniper:heartbeat")
+                    except Exception:
+                        pass
                 logger.info("[Sniper Relay] Clean baton handoff complete. Terminating current runner.")
                 os._exit(0)
+
+            # 3. Background token refresh every 10 minutes (600s)
+            if int(uptime) % 600 < 25 and uptime > 60:
+                try:
+                    fresh_fleet = load_fleet_tokens(force_refresh=True)
+                    if len(fresh_fleet) >= 20:
+                        CACHED_FLEET_TOKENS.update(fresh_fleet)
+                        logger.info(f"[Sniper Background] Refreshed {len(fresh_fleet)} tokens in memory.")
+                except Exception:
+                    pass
         except asyncio.CancelledError:
             break
         except Exception as e:
