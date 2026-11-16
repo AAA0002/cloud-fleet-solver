@@ -915,6 +915,51 @@ async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
         else:
             report["bots"]["13. AZM Miner"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
 
+        # 14. Dillo Miner (@dillo_miner_bot)
+        dillo_init = tokens.get("dillo_init_data") or tokens.get("dillo")
+        if dillo_init:
+            b_rep = {"core": {}, "side_tasks": []}
+            try:
+                d_headers = {
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36",
+                    "Origin": "https://dillo-miner-bot.ih0st.app",
+                    "Referer": "https://dillo-miner-bot.ih0st.app/"
+                }
+                raw_init = dillo_init
+                if "tgWebAppData=" in raw_init:
+                    raw_init = raw_init.split("tgWebAppData=")[1].split("&")[0]
+                    raw_init = urllib.parse.unquote(raw_init)
+                async with session.post("https://dillo-miner-bot.ih0st.app/api/app/call",
+                                        json={"initData": raw_init, "event": "state", "data": {}},
+                                        headers=d_headers,
+                                        timeout=aiohttp.ClientTimeout(total=8)) as dr:
+                    if dr.status == 200:
+                        dd = await dr.json()
+                        if dd.get("ok"):
+                            s_data = dd.get("data", {})
+                            u_obj = s_data.get("me", {}) or s_data.get("user", {})
+                            p_bal = float(u_obj.get("pool", 0.0) or 0.0)
+                            pend_bal = float(u_obj.get("pending", 0.0) or 0.0)
+                            energy = int(u_obj.get("energy", 0) or 0)
+                            b_rep["core"] = {
+                                "status": f"Active: {p_bal:,.2f} DILLO (Pending: {pend_bal:,.2f})",
+                                "balance": p_bal + pend_bal,
+                                "pool": p_bal,
+                                "pending": pend_bal,
+                                "energy": energy
+                            }
+                            b_rep["side_tasks"].append(f"Energy: {energy}/400 • Ref Earned: {u_obj.get('ref_earned', 0):,.2f}")
+                        else:
+                            b_rep["core"] = {"status": f"Error: {dd.get('error', 'unknown')}"}
+                    else:
+                        b_rep["core"] = {"status": f"HTTP {dr.status}"}
+            except Exception as e:
+                b_rep["error"] = str(e)
+            report["bots"]["14. Dillo Miner"] = b_rep
+        else:
+            report["bots"]["14. Dillo Miner"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
+
     return report
 
 async def audit_single_account(acc, idx, total, tokens_db, sem):
@@ -979,7 +1024,7 @@ async def audit_single_account(acc, idx, total, tokens_db, sem):
 
 async def main():
     print("="*80)
-    print(f"🚀 FLEET-WIDE 13-BOT FARMING & SIDE TASKS COMPREHENSIVE LIVE AUDIT (ALL {len(ACCOUNTS)} ACCOUNTS)")
+    print(f"🚀 FLEET-WIDE 14-BOT FARMING & SIDE TASKS COMPREHENSIVE LIVE AUDIT (ALL {len(ACCOUNTS)} ACCOUNTS)")
     print("="*80)
     
     fleet_reports = {}
@@ -1012,7 +1057,9 @@ async def main():
         "lifetime_energy": 0.0,
         "jvault": 0.0,
         "tavora": 0.0,
-        "victors": 0.0
+        "victors": 0.0,
+        "azm": 0.0,
+        "dillo": 0.0
     }
     for rep in fleet_reports.values():
         bots = rep.get("bots", {})
@@ -1073,6 +1120,9 @@ async def main():
         # 13. AZM Miner
         azm_core = bots.get("13. AZM Miner", {}).get("core", {})
         totals["azm"] = totals.get("azm", 0.0) + float(azm_core.get("balance", 0.0) or 0.0)
+        # 14. Dillo Miner
+        dillo_core = bots.get("14. Dillo Miner", {}).get("core", {})
+        totals["dillo"] = totals.get("dillo", 0.0) + float(dillo_core.get("balance", 0.0) or 0.0)
 
     print("\n" + "="*80)
     print(f"💎 FLEET-WIDE ACCUMULATED ASSET TOTALS ({len(fleet_reports)} ACCOUNTS):")
@@ -1090,6 +1140,7 @@ async def main():
     print(f"  • ⚡ TAVORA Node:     {totals['tavora']:,.2f} TVR")
     print(f"  • 🏢 Victor's Co:     {totals['victors']:,.0f} VIC Coins")
     print(f"  • 💎 AZM Miner:       {totals.get('azm', 0.0):,.2f} AZM")
+    print(f"  • ⛏️ Dillo Miner:     {totals.get('dillo', 0.0):,.2f} DILLO")
     print("="*80)
     print(f"✅ Fleet-Wide Audit Complete! All {len(fleet_reports)} accounts saved to live_farming_and_sidetasks_report.json")
     print("="*80)
@@ -1100,10 +1151,10 @@ async def main():
     if bot_token and notif_channel:
         healthy_accounts = sum(1 for r in fleet_reports.values() if sum(1 for b, v in r.get("bots", {}).items() if not v.get("error")) >= 4)
         short_card = (
-            f"🔍 <b>Fleet-Wide 13-Bot Audit Complete</b>\n"
+            f"🔍 <b>Fleet-Wide 14-Bot Audit Complete</b>\n"
             f"• <b>Accounts Audited:</b> <code>{len(fleet_reports)}/{len(fleet_reports)} Checked</code>\n"
             f"• <b>Operational Nodes:</b> <code>{healthy_accounts}/{len(fleet_reports)} Healthy</code>\n"
-            f"• <b>Active Protocols:</b> <code>13/13 Legitimate Mining Pools</code>\n"
+            f"• <b>Active Protocols:</b> <code>14/14 Legitimate Mining Pools</code>\n"
             f"• <b>Accumulated Yields:</b>\n"
             f"🪙 <code>{totals['atf']:,.1f} ATF</code>\n"
             f"  🌐 <code>{totals['knx']:,.0f} KNX</code> • 🐸 <code>{totals['pepe']:,.0f} PEPE</code>\n"
@@ -1115,6 +1166,7 @@ async def main():
             f"  ⚡ <code>{totals['lifetime_watts']:,} WATTS ({totals['lifetime_energy']:.4f} ENERGY)</code>\n"
             f"  💎 <code>{totals['jvault']:,.2f} JVT</code> • ⚡ <code>{totals['tavora']:,.2f} TVR</code>\n"
             f"  🏢 <code>{totals['victors']:,.0f} VIC Coins</code> • 💎 <code>{totals.get('azm', 0.0):,.2f} AZM</code>\n"
+            f"  ⛏️ <code>{totals.get('dillo', 0.0):,.2f} DILLO</code>\n"
             f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
         )
         try:

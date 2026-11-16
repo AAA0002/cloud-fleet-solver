@@ -273,12 +273,20 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
             return None
         try:
             p = urllib.parse.urlparse(str(url_str))
-            frag = urllib.parse.parse_qs(p.fragment).get("tgWebAppData", [None])[0]
+            frag_str = p.fragment
+            if "?" in frag_str:
+                frag_str = frag_str.split("?", 1)[1]
+            elif frag_str.startswith("/"):
+                frag_str = frag_str.lstrip("/")
+            frag = urllib.parse.parse_qs(frag_str).get("tgWebAppData", [None])[0]
             if frag:
                 if frag.startswith("user%3D") or "%257B" in frag or "%2522" in frag:
                     frag = urllib.parse.unquote(frag)
                 return frag
-            query = urllib.parse.parse_qs(p.query).get("tgWebAppData", [None])[0]
+            query_str = p.query
+            if query_str.startswith("/"):
+                query_str = query_str.lstrip("/")
+            query = urllib.parse.parse_qs(query_str).get("tgWebAppData", [None])[0]
             if query:
                 if query.startswith("user%3D") or "%257B" in query or "%2522" in query:
                     query = urllib.parse.unquote(query)
@@ -315,23 +323,23 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
 
     # If prefer_direct_url requested, execute Strategy D first
     if prefer_direct_url and default_url:
-        try:
-            is_jvault = ("jvault" in str(bot_username).lower() or "jvault" in str(default_url).lower())
-            req_p = {
-                "peer": bot_ent,
-                "bot": bot_ent,
-                "platform": "android",
-                "url": default_url,
-                "from_bot_menu": False if is_jvault else True
-            }
-            if start_param:
-                req_p["start_param"] = str(start_param)
-            res = await client(RequestWebViewRequest(**req_p))
-            tok = extract_from_url(getattr(res, "url", None))
-            if tok:
-                return tok
-        except Exception:
-            pass
+        for fbm in [False, True]:
+            try:
+                req_p = {
+                    "peer": bot_ent,
+                    "bot": bot_ent,
+                    "platform": "android",
+                    "url": default_url,
+                    "from_bot_menu": fbm
+                }
+                if start_param:
+                    req_p["start_param"] = str(start_param)
+                res = await client(RequestWebViewRequest(**req_p))
+                tok = extract_from_url(getattr(res, "url", None))
+                if tok:
+                    return tok
+            except Exception:
+                pass
 
     # Strategy A: RequestAppWebViewRequest with short names
     names_to_try = candidate_short_names or ["app", "play", "myapp", "miniapp", "bot", "game"]
@@ -379,7 +387,7 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
                 for row in m.buttons:
                     for b in row:
                         raw_b = getattr(b, "button", b)
-                        w_url = getattr(getattr(raw_b, "web_app", None), "url", None) or getattr(raw_b, "url", None)
+                        w_url = getattr(getattr(raw_b, "web_app", None), "url", None) or getattr(raw_b, "url", None) or getattr(getattr(raw_b, "type", None), "url", None) or getattr(b, "url", None)
                         if w_url:
                             try:
                                 req_p = {

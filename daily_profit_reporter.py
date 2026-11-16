@@ -7,7 +7,7 @@ Calculates:
 - Total BNB farmed & withdrawn today
 - Real-time fiat valuation (USD $ and BDT ৳) via Binance API
 - Live On-Chain Wallet Balance from Binance Smart Chain
-- Cloudflare Edge Mini-App Yield (13 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, JVault Miner, TAVORA Node, Victor's Company, AZM Miner)
+- Cloudflare Edge Mini-App Yield (14 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, JVault Miner, TAVORA Node, Victor's Company, AZM Miner, Dillo Miner)
 Broadcasts report to Telegram Payout Channel (-1004402765950) & Admin DM (6727787768).
 """
 
@@ -172,7 +172,8 @@ async def get_fleet_mining_totals() -> dict:
         "jvault": 0.0,
         "tavora": 0.0,
         "victors": 0.0,
-        "azm": 0.0
+        "azm": 0.0,
+        "dillo": 0.0
     }
     rep_file = os.path.join(BASE_DIR, "live_farming_and_sidetasks_report.json")
     if os.path.exists(rep_file):
@@ -283,6 +284,15 @@ async def get_fleet_mining_totals() -> dict:
                                 m = re.search(r"([\d\.]+)\s*AZM", core_str)
                                 if m: totals["azm"] += float(m.group(1))
 
+                        # 15. Dillo Miner
+                        elif "dillo" in b_name.lower():
+                            if isinstance(core, dict):
+                                try: totals["dillo"] += float(core.get("balance", 0) or core.get("pool", 0) or 0)
+                                except Exception: pass
+                            else:
+                                m = re.search(r"([\d\.]+)\s*DILLO", core_str)
+                                if m: totals["dillo"] += float(m.group(1))
+
 
         except Exception:
             pass
@@ -310,6 +320,8 @@ async def get_fleet_mining_totals() -> dict:
                     totals["victors"] = sum(float(a.get("victors_balance", 0) or 0) for a in accs)
                 if totals["azm"] == 0.0:
                     totals["azm"] = sum(float(a.get("azm_balance", 0) or 0) for a in accs)
+                if totals.get("dillo", 0.0) == 0.0:
+                    totals["dillo"] = sum(float(a.get("dillo_balance", 0) or 0) for a in accs)
         except Exception:
             pass
             
@@ -496,7 +508,7 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• *Live On-Chain Balance:* `{wallet_bnb:.6f} BNB` (`~${wallet_usd:.2f} USD` / `~৳{wallet_bdt:.0f} BDT`)\n"
             f"• *Historical Distributions:* `{total_payouts_count} payouts` totaling `{total_payouts_bnb:.6f} BNB`\n"
             f"• *Live BNB Price:* `${bnb_price:.2f} USD`\n\n"
-            f"💎 *2. Multi-Chain 13-Bot Autonomous Mining Treasury:*\n"
+            f"💎 *2. Multi-Chain 14-Bot Autonomous Mining Treasury:*\n"
             f"• *ATF Miner:* `{fleet_totals['atf']:,.2f} ATF` mined (Levels up to 160+, Deterministic Math Solver)\n"
             f"• *Kynex Network:* `{fleet_totals['knx']:,.2f} KNX` mined (Firebase RTDB Node Auto-Claim)\n"
             f"• *PepeGram:* `{fleet_totals['pepe']:,.2f} PEPE` mined (6h Cycles & Power Boosts)\n"
@@ -510,6 +522,7 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• *TAVORA Node:* `{fleet_totals['tavora']:,.2f} TVR` (Node Dividends, Daily Check-in & Referral Tree)\n"
             f"• *Victor's Company:* `{fleet_totals['victors']:,.0f} Coins` (Autonomous Mining, Shifts & Referral Commissions)\n"
             f"• *AZM Miner:* `{fleet_totals['azm']:,.2f} AZM` (TON Jetton Protocol, 15 AZM/h Active Mining, Streaks & Harvests)\n"
+            f"• *Dillo Miner:* `{fleet_totals['dillo']:,.2f} DILLO` (TON Jetton Protocol, 2,400 DILLO/d Passive Farm, Energy Taps & Streaks)\n"
             f"• *On-Chain Target TON:* `{TON_PRIMARY_WALLET}`\n"
             f"• *Live On-Chain TON Balance:* `{wallet_ton:.4f} TON` (`~${wallet_ton_usd:.2f} USD` / `~৳{wallet_ton_bdt:.0f} BDT`)\n"
             f"• *TON Price (TonAPI):* `${ton_price:.2f} USD`\n\n"
@@ -572,7 +585,7 @@ async def generate_and_send_report(dry_run: bool = False):
         if admin_notif_channel:
             short_ledger = (
                 f"📊 <b>Daily Fleet Financial Ledger</b>\n"
-                f"• <b>Fleet Scale:</b> <code>{total_accounts} Accounts • 13/13 Bots</code>\n"
+                f"• <b>Fleet Scale:</b> <code>{total_accounts} Accounts • 14/14 Bots</code>\n"
                 f"• <b>Treasury Vault:</b> <code>{wallet_bnb:.6f} BNB</code> (${wallet_usd:.2f}) • <code>{wallet_ton:.4f} TON</code> (${wallet_ton_usd:.2f})\n"
                 f"• <b>Combined Vault:</b> ~${wallet_usd + wallet_ton_usd:.2f} USD (~৳{wallet_bdt + wallet_ton_bdt:.0f} BDT)\n"
                 f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"

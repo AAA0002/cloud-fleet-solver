@@ -2477,6 +2477,11 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
         return res
 
     try:
+        raw_init = dillo_init
+        if "tgWebAppData=" in raw_init:
+            raw_init = raw_init.split("tgWebAppData=")[1].split("&")[0]
+            raw_init = urllib.parse.unquote(raw_init)
+
         h = {
             "Content-Type": "application/json",
             "User-Agent": acc.get("user_agent") or "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36",
@@ -2486,7 +2491,7 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
         url = "https://dillo-miner-bot.ih0st.app/api/app/call"
 
         # 1. Start mining session
-        async with session.post(url, json={"initData": dillo_init, "event": "start", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as r:
+        async with session.post(url, json={"initData": raw_init, "event": "start", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as r:
             if r.status == 200:
                 s_data = await r.json()
                 if s_data.get("ok"):
@@ -2499,7 +2504,7 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
 
         # 2. Daily Check-in
         await asyncio.sleep(0.3)
-        async with session.post(url, json={"initData": dillo_init, "event": "checkin", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+        async with session.post(url, json={"initData": raw_init, "event": "checkin", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
             if r.status == 200:
                 c_data = await r.json()
                 if c_data.get("ok") and c_data.get("data", {}).get("ok"):
@@ -2509,7 +2514,7 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
 
         # 3. Energy Tap
         await asyncio.sleep(0.3)
-        async with session.post(url, json={"initData": dillo_init, "event": "tap", "data": {"n": 50}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+        async with session.post(url, json={"initData": raw_init, "event": "tap", "data": {"n": 50}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
             if r.status == 200:
                 t_data = await r.json()
                 if t_data.get("ok") and t_data.get("data", {}).get("ok"):
@@ -2519,7 +2524,7 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
 
         # 4. Harvest Mining Collect
         await asyncio.sleep(0.3)
-        async with session.post(url, json={"initData": dillo_init, "event": "collect", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+        async with session.post(url, json={"initData": raw_init, "event": "collect", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
             if r.status == 200:
                 col_data = await r.json()
                 if col_data.get("ok") and col_data.get("data", {}).get("ok"):
@@ -2530,16 +2535,20 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
 
         # 5. Get full state
         await asyncio.sleep(0.3)
-        async with session.post(url, json={"initData": dillo_init, "event": "state", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+        async with session.post(url, json={"initData": raw_init, "event": "state", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
             if r.status == 200:
                 st_data = await r.json()
                 if st_data.get("ok"):
                     res["success"] = True
-                    me = st_data.get("data", {}).get("me", {})
-                    pool = float(me.get("pool") or me.get("demo") or 0.0)
-                    res["balance"] = pool
-                    if me.get("ref_earned", 0) > 0 and uid == MASTER_UID:
-                        res["notes"].append(f"ref_earned_{me['ref_earned']:.0f}")
+                    d_obj = st_data.get("data", {})
+                    user_obj = d_obj.get("user", {})
+                    me_obj = d_obj.get("me", {})
+                    pool = float(user_obj.get("pool") or me_obj.get("pool") or me_obj.get("demo") or 0.0)
+                    pend = float(user_obj.get("pending") or me_obj.get("pending") or 0.0)
+                    res["balance"] = pool + pend
+                    ref_earned = user_obj.get("ref_earned") or me_obj.get("ref_earned", 0)
+                    if ref_earned and uid == MASTER_UID:
+                        res["notes"].append(f"ref_earned_{float(ref_earned):.0f}")
 
     except Exception as e:
         res["notes"].append(f"err: {str(e)[:40]}")
@@ -2661,7 +2670,7 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
 
 async def main():
     logger.info("=============================================================================")
-    logger.info(f"🎯 STARTING COMPLETE 13-BOT FLEET SIDE-TASK HARVEST ({len(ACCOUNTS)} ACCOUNTS)")
+    logger.info(f"🎯 STARTING COMPLETE 14-BOT FLEET SIDE-TASK HARVEST ({len(ACCOUNTS)} ACCOUNTS)")
     logger.info("=============================================================================")
 
     conn = aiohttp.TCPConnector(limit=25, ttl_dns_cache=300)
@@ -2677,7 +2686,7 @@ async def main():
 
         # Print Summary
         logger.info("\n" + "=" * 80)
-        logger.info(f"📊 13-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(ACCOUNTS)} ACCOUNTS)")
+        logger.info(f"📊 14-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(ACCOUNTS)} ACCOUNTS)")
         logger.info("=" * 80)
         total_tasks = 0
         for rep in reports:
@@ -2724,7 +2733,7 @@ async def main():
 
         if bot_token and notif_channel:
             short_card = (
-                f"⚡ <b>Fleet 13-Bot Auto-Harvest Complete</b>\n"
+                f"⚡ <b>Fleet 14-Bot Auto-Harvest Complete</b>\n"
                 f"• <b>Accounts Farmed:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code>\n"
                 f"• <b>Tasks & Rewards Claimed:</b> <code>{total_tasks} Total Claimed</code>\n"
                 f"• <b>Active Protocols (13/13):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • JV:{jv_tot} • TVR:{tav_tot} • VIC:{vic_tot} • AZM:{azm_tot}</code>\n"
