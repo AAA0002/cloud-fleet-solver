@@ -21,7 +21,7 @@ and leftover third-party sponsor channels across all fleet accounts:
    - Purges orphaned lock keys (lock:* or fleet:lock:*)
 
 3. Telegram Ephemeral Dialog & Sponsor Purger (Rule 8 & 11):
-   - Strict whitelisting: NEVER deletes official fleet/admin channels or active 12 bots
+   - Strict whitelisting: NEVER deletes official fleet/admin channels or active 13 bots
    - Detects and leaves all non-whitelisted sponsor channels joined during tasks
    - Revokes and purges dialogs for defunct/promo bots (e.g. Gram Master, Grouche, etc.)
    - Keeps the user's Telegram chat list 100% clean and pristine

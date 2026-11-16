@@ -4,7 +4,7 @@ scripts/maintenance/audit_withdrawal_readiness.py
 =============================================================================
 Universal Fleet Withdrawal Readiness Auditor & Automated Cashout Sentinel
 =============================================================================
-Audits live balances across ALL 23 fleet accounts for all 12 active mining protocols
+Audits live balances across ALL 23 fleet accounts for all 13 active mining protocols
 against official, ground-truth payout thresholds:
 
 1. Chicken Land: Dynamic threshold (minUsd $0.1043 / eggUsd ~15,019 eggs = 0.1001 GRAM)
@@ -19,6 +19,7 @@ against official, ground-truth payout thresholds:
 10. ATF Miner: >= 10,000 ATF (fee: 70 ATF) -> On-chain TON withdrawal
 11. Victor's Company: Shifts & 10% crew mining commissions swept to Master Account
 12. TAVORA Node: Daily node sign-in dividends & lottery yields swept to balance
+13. AZM Miner: >= 10,000 AZM -> On-chain TON withdrawal to dedicated TON wallet
 
 Complies with:
 - Rule 4: Zero Phone Load Directive (100% Cloud Execution)
