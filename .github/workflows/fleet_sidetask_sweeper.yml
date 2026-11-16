@@ -10,7 +10,7 @@ jobs:
   sweep_fleet_sidetasks:
     name: "Autonomous 13-Bot Fleet Sweeper & Withdrawal Sentinel"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
 
     steps:
       - name: Checkout Repository
