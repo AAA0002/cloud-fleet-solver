@@ -2,11 +2,11 @@
 """
 finish_all_fleet_sidetasks.py
 =============================================================================
-COMPREHENSIVE 13-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
+COMPREHENSIVE 14-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
 =============================================================================
 Sweeps and completes all available side-tasks, daily check-ins, social joins,
 cooldown missions, wallet verifications, and referral commission claims across
-all dynamic accounts in the fleet for all 13 legitimate bots:
+all dynamic accounts in the fleet for all 14 legitimate bots:
   1. ATF Miner (@atfminers_bot)
   2. Kynex Network (@Kynex_miningbot)
   3. PepeGram (@Pepe_gram_bot)
@@ -20,6 +20,7 @@ all dynamic accounts in the fleet for all 13 legitimate bots:
   11. TAVORA Node (@TavoraNode_Bot)
   12. Victor's Company (@Victors_Company_bot)
   13. AZM Miner (@AZMIR_Miner_BOT)
+  14. Dillo Miner (@dillo_miner_bot)
 
 Zero Phone Load (Rule 4): Runs once as a clean batch script in cloud/container,
 exits cleanly, and persists updated tokens to Upstash Redis and Cloudflare Edge.
@@ -2468,6 +2469,83 @@ async def sweep_azm_tasks(session: aiohttp.ClientSession, uid: str, name: str, a
     return res
 
 
+async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str, dillo_init: str, acc: dict) -> Dict[str, Any]:
+    """Sweeps Dillo Miner (@dillo_miner_bot) mining activation, daily check-in, energy tapping, and mining harvest."""
+    res = {"bot": "Dillo Miner", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0}
+    if not dillo_init:
+        res["notes"].append("missing_init_data")
+        return res
+
+    try:
+        h = {
+            "Content-Type": "application/json",
+            "User-Agent": acc.get("user_agent") or "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36",
+            "Origin": "https://dillo-miner-bot.ih0st.app",
+            "Referer": "https://dillo-miner-bot.ih0st.app/#/"
+        }
+        url = "https://dillo-miner-bot.ih0st.app/api/app/call"
+
+        # 1. Start mining session
+        async with session.post(url, json={"initData": dillo_init, "event": "start", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status == 200:
+                s_data = await r.json()
+                if s_data.get("ok"):
+                    res["success"] = True
+                    d = s_data.get("data", {})
+                    if d.get("started"):
+                        res["notes"].append("mine_started")
+            else:
+                res["notes"].append(f"start_{r.status}")
+
+        # 2. Daily Check-in
+        await asyncio.sleep(0.3)
+        async with session.post(url, json={"initData": dillo_init, "event": "checkin", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+            if r.status == 200:
+                c_data = await r.json()
+                if c_data.get("ok") and c_data.get("data", {}).get("ok"):
+                    res["tasks_claimed"] += 1
+                    rew = c_data.get("data", {}).get("reward", 1200)
+                    res["notes"].append(f"checkin_+{rew}")
+
+        # 3. Energy Tap
+        await asyncio.sleep(0.3)
+        async with session.post(url, json={"initData": dillo_init, "event": "tap", "data": {"n": 50}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+            if r.status == 200:
+                t_data = await r.json()
+                if t_data.get("ok") and t_data.get("data", {}).get("ok"):
+                    gain = t_data.get("data", {}).get("gain", 0)
+                    if gain > 0:
+                        res["notes"].append(f"tap_+{gain:.2f}")
+
+        # 4. Harvest Mining Collect
+        await asyncio.sleep(0.3)
+        async with session.post(url, json={"initData": dillo_init, "event": "collect", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+            if r.status == 200:
+                col_data = await r.json()
+                if col_data.get("ok") and col_data.get("data", {}).get("ok"):
+                    col = col_data.get("data", {}).get("collected", 0)
+                    if col > 0:
+                        res["tasks_claimed"] += 1
+                        res["notes"].append(f"harvest_+{col:.2f}")
+
+        # 5. Get full state
+        await asyncio.sleep(0.3)
+        async with session.post(url, json={"initData": dillo_init, "event": "state", "data": {}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+            if r.status == 200:
+                st_data = await r.json()
+                if st_data.get("ok"):
+                    res["success"] = True
+                    me = st_data.get("data", {}).get("me", {})
+                    pool = float(me.get("pool") or me.get("demo") or 0.0)
+                    res["balance"] = pool
+                    if me.get("ref_earned", 0) > 0 and uid == MASTER_UID:
+                        res["notes"].append(f"ref_earned_{me['ref_earned']:.0f}")
+
+    except Exception as e:
+        res["notes"].append(f"err: {str(e)[:40]}")
+    return res
+
+
 # =============================================================================
 # 3. MAIN RUNNER (23-ACCOUNT PARALLEL PIPELINE)
 # =============================================================================
@@ -2560,6 +2638,11 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         azm_init = merged_toks.get("azm_init_data") or merged_toks.get("azm") or merged_toks.get("azmir") or ""
         azm_res = await sweep_azm_tasks(session, uid, name, azm_init, merged_toks)
         account_report["results"]["azm"] = azm_res
+
+        # 14. Dillo Miner (@dillo_miner_bot)
+        dillo_init = merged_toks.get("dillo_init_data") or merged_toks.get("dillo") or ""
+        dillo_res = await sweep_dillo_tasks(session, uid, name, dillo_init, merged_toks)
+        account_report["results"]["dillo"] = dillo_res
 
         # Sync tokens to Cloudflare Workers if newly refreshed
         await sync_token_to_cf(session, uid, merged_toks)

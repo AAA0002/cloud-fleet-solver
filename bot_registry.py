@@ -192,6 +192,20 @@ ACTIVE_BOTS: Dict[str, Dict[str, Any]] = {
         "sponsor_channels": [],
         "requires_turnstile": False,
         "is_active": True,
+    },
+    "dillo": {
+        "id": "dillo",
+        "name": "Dillo Miner",
+        "bot_username": "dillo_miner_bot",
+        "bot_aliases": ["dillominer_bot", 9058560283],
+        "master_ref_code": "6727787768",
+        "app_url": "https://dillo-miner-bot.ih0st.app/#/",
+        "token_key": "dillo_init_data",
+        "short_names": ["app"],
+        "api_base": "https://dillo-miner-bot.ih0st.app/api/app",
+        "sponsor_channels": ["DilloTONLive"],
+        "requires_turnstile": False,
+        "is_active": True,
     }
 }
 

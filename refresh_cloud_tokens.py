@@ -84,6 +84,9 @@ VICTORS_REF = "ref_9DB8C58014"
 AZM_BOT = "AZMIR_Miner_BOT"
 AZM_REF = "6727787768"
 AZM_APP_URL = os.getenv("AZM_APP_URL", "https://amd-dot-thin-resident.trycloudflare.com/")
+DILLO_BOT = "dillo_miner_bot"
+DILLO_REF = "6727787768"
+DILLO_APP_URL = "https://dillo-miner-bot.ih0st.app/#/"
 
 
 def robust_json_loads(val):
@@ -596,6 +599,15 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
             tokens["azm"] = azm_tok
             tokens["azmir"] = azm_tok
             print(f"  💎 AZM Miner: Collected")
+        await asyncio.sleep(0.5)
+
+        # 15. Dillo Miner (@dillo_miner_bot)
+        dillo_p = None if is_master else DILLO_REF
+        dillo_tok = await extract_bot_webapp_token(cl, DILLO_BOT, start_param=dillo_p, default_url=DILLO_APP_URL, candidate_short_names=["app"], prefer_direct_url=True)
+        if dillo_tok:
+            tokens["dillo_init_data"] = dillo_tok
+            tokens["dillo"] = dillo_tok
+            print(f"  ⛏️ Dillo Miner: Collected")
         await asyncio.sleep(0.5)
 
         # Strict Ephemeral Policy (Rule 11): Token refresh is 100% read-only WebApp querying.
