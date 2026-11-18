@@ -1173,15 +1173,15 @@ async def start_mtproto_listener():
         except Exception:
             pass
 
-    # Choose Koram Shah (7648254021) or Master Account (6727787768)
+    # Dedicated listener worker accounts (Never use Master 6727787768 to avoid session conflicts & keep chat clean per Rule 11)
     listener_acc = None
     for acc in accounts:
-        if str(acc.get("user_id")) in ("7648254021", "6727787768") and acc.get("session_string"):
+        if str(acc.get("user_id")) in ("7648254021", "8826375659", "8450010161") and acc.get("session_string"):
             listener_acc = acc
             break
     if not listener_acc:
         for acc in accounts:
-            if acc.get("session_string") and str(acc.get("user_id")) not in ("8881914294",):
+            if acc.get("session_string") and str(acc.get("user_id")) not in ("8881914294", "6727787768"):
                 listener_acc = acc
                 break
 
