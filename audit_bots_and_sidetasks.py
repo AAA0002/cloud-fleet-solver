@@ -897,7 +897,7 @@ async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
             b_rep = {"core": {}, "side_tasks": []}
             try:
                 azm_h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36"}
-                async with session.get("https://amd-dot-thin-resident.trycloudflare.com/api/state", headers=azm_h, timeout=aiohttp.ClientTimeout(total=8)) as ar:
+                async with session.get("https://provide-presentation-subsidiaries-heel.trycloudflare.com/api/state", headers=azm_h, timeout=aiohttp.ClientTimeout(total=8)) as ar:
                     if ar.status == 200:
                         ad = await ar.json()
                         a_bal = float(ad.get("balance", 0.0) or 0.0)
@@ -959,6 +959,36 @@ async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
             report["bots"]["14. Dillo Miner"] = b_rep
         else:
             report["bots"]["14. Dillo Miner"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
+
+        # 15. Hunter Miner (@GramHtrsbot)
+        hunter_init = tokens.get("hunter_init_data") or tokens.get("hunter") or tokens.get("gramhtrs")
+        hunter_jwt = tokens.get("hunter_jwt")
+        if hunter_init or hunter_jwt:
+            b_rep = {"core": {}, "side_tasks": []}
+            try:
+                from hunter_miner import HunterClient
+                client = HunterClient(uid=uid, name=name, init_data=hunter_init or "", username=acc.get("username", ""), jwt_token=hunter_jwt or "")
+                loop = asyncio.get_running_loop()
+                def _audit_hunter_sync():
+                    if not client.authenticate():
+                        return {"status": "Auth Failed ⚠️"}
+                    u_info = client.user_data or {}
+                    m_info = client.mining_data or {}
+                    bal = float(u_info.get("coin_balance", 0.0) or 0.0)
+                    m_active = bool(m_info.get("isActive"))
+                    return {
+                        "status": f"Active: {bal:.4f} GRAM (Mining: {'Active' if m_active else 'Idle'})",
+                        "balance": bal,
+                        "mining_active": m_active
+                    }
+                res_core = await loop.run_in_executor(None, _audit_hunter_sync)
+                b_rep["core"] = res_core
+                b_rep["side_tasks"].append(f"GRAM Balance: {res_core.get('balance', 0.0):.4f} • Master Linked: {'Yes' if acc.get('hunter_referral_bound') else 'Pending'}")
+            except Exception as e:
+                b_rep["error"] = str(e)
+            report["bots"]["15. Hunter Miner"] = b_rep
+        else:
+            report["bots"]["15. Hunter Miner"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
 
     return report
 
@@ -1123,6 +1153,9 @@ async def main():
         # 14. Dillo Miner
         dillo_core = bots.get("14. Dillo Miner", {}).get("core", {})
         totals["dillo"] = totals.get("dillo", 0.0) + float(dillo_core.get("balance", 0.0) or 0.0)
+        # 15. Hunter Miner
+        hunter_core = bots.get("15. Hunter Miner", {}).get("core", {})
+        totals["hunter"] = totals.get("hunter", 0.0) + float(hunter_core.get("balance", 0.0) or 0.0)
 
     print("\n" + "="*80)
     print(f"💎 FLEET-WIDE ACCUMULATED ASSET TOTALS ({len(fleet_reports)} ACCOUNTS):")
@@ -1141,6 +1174,7 @@ async def main():
     print(f"  • 🏢 Victor's Co:     {totals['victors']:,.0f} VIC Coins")
     print(f"  • 💎 AZM Miner:       {totals.get('azm', 0.0):,.2f} AZM")
     print(f"  • ⛏️ Dillo Miner:     {totals.get('dillo', 0.0):,.2f} DILLO")
+    print(f"  • 🎯 Hunter Miner:    {totals.get('hunter', 0.0):,.4f} GRAM")
     print("="*80)
     print(f"✅ Fleet-Wide Audit Complete! All {len(fleet_reports)} accounts saved to live_farming_and_sidetasks_report.json")
     print("="*80)
@@ -1151,10 +1185,10 @@ async def main():
     if bot_token and notif_channel:
         healthy_accounts = sum(1 for r in fleet_reports.values() if sum(1 for b, v in r.get("bots", {}).items() if not v.get("error")) >= 4)
         short_card = (
-            f"🔍 <b>Fleet-Wide 14-Bot Audit Complete</b>\n"
+            f"🔍 <b>Fleet-Wide 15-Bot Audit Complete</b>\n"
             f"• <b>Accounts Audited:</b> <code>{len(fleet_reports)}/{len(fleet_reports)} Checked</code>\n"
             f"• <b>Operational Nodes:</b> <code>{healthy_accounts}/{len(fleet_reports)} Healthy</code>\n"
-            f"• <b>Active Protocols:</b> <code>14/14 Legitimate Mining Pools</code>\n"
+            f"• <b>Active Protocols:</b> <code>15/15 Legitimate Mining Pools</code>\n"
             f"• <b>Accumulated Yields:</b>\n"
             f"🪙 <code>{totals['atf']:,.1f} ATF</code>\n"
             f"  🌐 <code>{totals['knx']:,.0f} KNX</code> • 🐸 <code>{totals['pepe']:,.0f} PEPE</code>\n"
@@ -1166,7 +1200,7 @@ async def main():
             f"  ⚡ <code>{totals['lifetime_watts']:,} WATTS ({totals['lifetime_energy']:.4f} ENERGY)</code>\n"
             f"  💎 <code>{totals['jvault']:,.2f} JVT</code> • ⚡ <code>{totals['tavora']:,.2f} TVR</code>\n"
             f"  🏢 <code>{totals['victors']:,.0f} VIC Coins</code> • 💎 <code>{totals.get('azm', 0.0):,.2f} AZM</code>\n"
-            f"  ⛏️ <code>{totals.get('dillo', 0.0):,.2f} DILLO</code>\n"
+            f"  ⛏️ <code>{totals.get('dillo', 0.0):,.2f} DILLO</code> • 🎯 <code>{totals.get('hunter', 0.0):,.4f} GRAM</code>\n"
             f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
         )
         try:
