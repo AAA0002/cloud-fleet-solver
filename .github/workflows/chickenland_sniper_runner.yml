@@ -3,8 +3,8 @@ name: "Chicken Land 24/7 Cloud Promo Code Sniper (Dual-Engine)"
 on:
   workflow_dispatch:
   schedule:
-    # High-frequency supervisor keepalive runs every 15 minutes
-    - cron: "*/15 * * * *"
+    # Safety keepalive runs every 6 hours (relay handoff handles normal continuation)
+    - cron: "0 */6 * * *"
 
 permissions:
   actions: write
@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: chickenland-sniper-runner
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   run_chickenland_sniper:
