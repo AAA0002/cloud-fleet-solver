@@ -29,12 +29,34 @@ import logging
 import aiohttp
 from typing import Dict, Any, Optional
 
+import urllib.request
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("azm_miner")
 
-AZM_API_BASE_DEFAULT = "https://amd-dot-thin-resident.trycloudflare.com/api"
-AZM_API_BASE = os.getenv("AZM_API_BASE") or AZM_API_BASE_DEFAULT
+AZM_API_BASE_DEFAULT = "https://provide-presentation-subsidiaries-heel.trycloudflare.com/api"
 MASTER_UID = "6727787768"
+AZM_CIRCUIT_BROKEN = False
+
+def get_azm_api_base() -> str:
+    env_base = os.getenv("AZM_API_BASE")
+    if env_base:
+        return env_base
+    up_url = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL")
+    up_tok = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN")
+    if up_url and up_tok:
+        try:
+            req = urllib.request.Request(f"{up_url}/get/fleet:azm_api_base", headers={"Authorization": f"Bearer {up_tok}"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                d = json.loads(resp.read().decode())
+                res = d.get("result")
+                if res and isinstance(res, str) and res.startswith("http"):
+                    return res.strip().rstrip("/")
+        except Exception:
+            pass
+    return AZM_API_BASE_DEFAULT
+
+AZM_API_BASE = get_azm_api_base()
 
 async def farm_azm_account(
     session: aiohttp.ClientSession,
@@ -46,6 +68,7 @@ async def farm_azm_account(
     Farms an individual account on AZM Miner.
     Performs wallet activation, daily check-in, channel verification, and harvest claim.
     """
+    global AZM_CIRCUIT_BROKEN
     uid = str(acc.get("user_id") or acc.get("account_id") or "")
     name = acc.get("name") or acc.get("first_name", f"Account #{uid}")
     res = {
@@ -58,6 +81,10 @@ async def farm_azm_account(
         "hourly": 15.0,
         "notes": []
     }
+
+    if AZM_CIRCUIT_BROKEN:
+        res["notes"].append("tunnel_offline_skipped")
+        return res
 
     if not init_data:
         res["notes"].append("missing_init_data")
@@ -73,7 +100,7 @@ async def farm_azm_account(
     async def api_post(endpoint: str, payload: dict) -> Optional[dict]:
         url = f"{AZM_API_BASE}{endpoint}"
         try:
-            async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=4)) as resp:
                 if resp.status in (200, 201):
                     return await resp.json()
                 elif resp.status == 400:
@@ -90,13 +117,14 @@ async def farm_azm_account(
 
     # 1. Query Current State
     try:
-        async with session.get(f"{AZM_API_BASE}/state", headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        async with session.get(f"{AZM_API_BASE}/state", headers=headers, timeout=aiohttp.ClientTimeout(total=4)) as resp:
             if resp.status != 200:
                 res["notes"].append(f"state_http_{resp.status}")
                 return res
             state = await resp.json()
     except Exception as e:
-        res["notes"].append(f"state_err_{str(e)[:30]}")
+        AZM_CIRCUIT_BROKEN = True
+        res["notes"].append(f"state_err_{str(e)[:25]}")
         return res
 
     res["success"] = True
