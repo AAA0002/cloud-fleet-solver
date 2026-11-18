@@ -700,6 +700,7 @@ async def sweep_atf_tasks(session: aiohttp.ClientSession, uid: str, name: str, a
                             await jitter(1.5, 3.0)
                             async with atf_session.post(f"{atf_base}?action=start_mine&t={int(time.time()*1000)}", json=payload({"math_challenge_id": chd["challenge_id"], "math_answer": ans}), headers=atf_h) as sm:
                                 if sm.status == 200:
+                                    res["tasks_claimed"] += 1
                                     res["notes"].append("mining_restarted")
             except Exception:
                 pass
@@ -966,7 +967,8 @@ async def sweep_adxearn_tasks(session: aiohttp.ClientSession, uid: str, name: st
                     td = await tr.json()
                     for tk in (td.get("tasks", []) if isinstance(td, dict) else []):
                         t_id = tk.get("id")
-                        if t_id and not tk.get("completed") and not tk.get("claimed"):
+                        is_done = (tk.get("completed_count", 0) > 0 and not tk.get("repeatable", False)) or tk.get("completed") or tk.get("claimed")
+                        if t_id and not is_done:
                             try:
                                 async with session.post(f"{adx_base}/rewards/task-start", json={"taskId": t_id}, headers=adx_headers) as s_resp:
                                     if s_resp.status == 200:
@@ -1017,7 +1019,7 @@ async def sweep_adxearn_tasks(session: aiohttp.ClientSession, uid: str, name: st
 
         # D. Single Unified Cooldown Sleep (if anything was started)
         if started_tasks or started_nets or started_offers:
-            await asyncio.sleep(16.2)
+            await asyncio.sleep(20.5)
 
         # E. Claim Dynamic Tasks
         for t_id in started_tasks:
@@ -1298,16 +1300,34 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
                 if wd_info_resp.get("ok"):
                     wd_res = wd_info_resp.get("result", {})
                     used_today = wd_res.get("usedToday", 0)
+                    next_at = wd_res.get("nextAt", 0) or 0
+                    now_ms = wd_res.get("now", 0) or int(time.time() * 1000)
                     first_cfg = wd_res.get("first", {})
                     req_eggs = first_cfg.get("eggs", 15) if first_cfg.get("on") else 15
                     egg_bal = wd_res.get("user", {}).get("eggBal", 0)
-                    if used_today == 0 and egg_bal >= req_eggs:
+
+                    # Cooldown check
+                    if used_today > 0 and next_at > 0 and now_ms < next_at:
+                        rem_h = (next_at - now_ms) / (1000.0 * 3600.0)
+                        res["notes"].append(f"24h_cd_{rem_h:.1f}h")
+                    elif (used_today == 0 or now_ms >= next_at) and egg_bal >= req_eggs:
+                        # Target TON vault: Master memo 'C', Koram memo ''
+                        if str(uid) == MASTER_UID:
+                            target_wd_addr = PRIMARY_TON_WALLET
+                            cl_memo = "C"
+                        elif str(uid) == "7648254021":
+                            target_wd_addr = PRIMARY_TON_WALLET
+                            cl_memo = ""
+                        else:
+                            target_wd_addr = wd_addr
+                            cl_memo = ""
+
                         req_id = f"w{int(time.time())}{random.randint(1000, 9999)}"
                         wd_payload = {
                             "method": "gram",
-                            "address": wd_addr,
-                            "memo": "103525143",
-                            "eggs": req_eggs,
+                            "address": target_wd_addr,
+                            "memo": cl_memo,
+                            "eggs": egg_bal,
                             "reqId": req_id
                         }
                         wd_exec_resp = await rpc("/api/withdraw", wd_payload)
@@ -1315,7 +1335,7 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
                             w_data = wd_exec_resp.get("result", {})
                             gram_amt = w_data.get("amount", 0)
                             res["notes"].append(f"wd_chickenland_{gram_amt:.6f}gram")
-                            logger.info(f"[{name}] Chicken Land auto-withdraw queued: {gram_amt:.6f} GRAM to {wd_addr}")
+                            logger.info(f"[{name}] Chicken Land auto-withdraw queued: {gram_amt:.6f} GRAM to {target_wd_addr} (memo: '{cl_memo}')")
         except Exception as cl_wde:
             logger.debug(f"[{name}] Chicken Land auto-withdraw note: {cl_wde}")
 
@@ -1529,7 +1549,7 @@ async def sweep_myage_tasks(session: aiohttp.ClientSession, uid: str, name: str,
         return res
     clean_init = urllib.parse.unquote(init_data)
     headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/128.0",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 14; SM-S918B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.107 Mobile Safari/537.36 Telegram-Android/11.3.1 (Samsung SM-S918B; Android 14; SDK 34; AVERAGE)",
         "Content-Type": "application/json",
         "Authorization": f"tma {clean_init}",
         "Origin": "https://myageapp.xyz",
@@ -1811,13 +1831,18 @@ async def sweep_earnvault_tasks(session: aiohttp.ClientSession, uid: str, name: 
                     ad_data = (await ads_r.json()).get("result", {})
                     if ad_data.get("enabled") and ad_data.get("eligible"):
                         networks = ad_data.get("networks", [])
+                        ads_watched = 0
                         for net in networks:
+                            if ads_watched >= 2:
+                                break
                             net_id = net.get("id")
                             left = int(net.get("left", 0))
                             if net.get("ready") and left > 0 and net_id:
-                                # Watch up to 2 ads per network per sweep cycle to harvest rewards smoothly without stalling
+                                # Harvest up to 2 ads total per sweep to balance maximum rewards with 5x execution speed
                                 net_finished = False
-                                for _ in range(min(left, 2)):
+                                for _ in range(1):
+                                    if ads_watched >= 2:
+                                        break
                                     sess_id = None
                                     min_watch = 10
                                     for retry_s in range(4):
@@ -1875,6 +1900,7 @@ async def sweep_earnvault_tasks(session: aiohttp.ClientSession, uid: str, name: 
                                                     st = ca_d.get("status")
                                                     if st in ("counted", "credited"):
                                                         res["tasks_claimed"] += 1
+                                                        ads_watched += 1
                                                         if ca_d.get("creditedCents"):
                                                             res["notes"].append(f"ad_{net_id}_credited_+{ca_d.get('creditedCents')}c")
                                                             res["balance"] += (ca_d.get("creditedCents") / 100.0)
@@ -2239,6 +2265,8 @@ async def sweep_tavora_tasks(session: aiohttp.ClientSession, uid: str, name: str
                     if sd.get("prize"):
                         res["tasks_claimed"] += 1
                         res["notes"].append(f"sign_in_+{sd.get('prize', {}).get('number', 1)}TVR")
+                    elif "Signed in today" in str(sd.get("error", "")):
+                        res["notes"].append("signed_in_today")
         except Exception:
             pass
 
@@ -2248,16 +2276,16 @@ async def sweep_tavora_tasks(session: aiohttp.ClientSession, uid: str, name: str
                 if lir.status == 200:
                     ld = await lir.json()
                     inf = ld.get("info", {})
-                    yet = int(inf.get("lottery_times_yet", 0) or 0)
-                    limit = int(inf.get("limit_times", 5) or 5)
-                    rem = max(0, limit - yet)
-                    for _ in range(min(rem, 5)):
+                    avail_spins = int(inf.get("lottery_times", 0) or 0)
+                    for _ in range(min(avail_spins, 5)):
                         async with session.post("https://tavoranode.vip/api/user/user/user-lottery/create", json={}, headers=tav_h, timeout=aiohttp.ClientTimeout(total=6)) as cr:
                             if cr.status == 200:
                                 cd = await cr.json()
                                 if not cd.get("error"):
                                     res["tasks_claimed"] += 1
-                                    res["notes"].append("lottery_win")
+                                    rew_num = cd.get("number", 0)
+                                    rew_type = cd.get("type", "TVR")
+                                    res["notes"].append(f"lottery_+{rew_num}{rew_type}")
                                     await asyncio.sleep(1.0)
                                 else:
                                     break
@@ -2552,19 +2580,20 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
                     rew = c_data.get("data", {}).get("reward", 1200)
                     res["notes"].append(f"checkin_+{rew}")
 
-        # 3. Energy Tap
+        # 3. Energy Tap (Full capacity up to 400)
         await asyncio.sleep(0.3)
-        async with session.post(url, json={"initData": raw_init, "event": "tap", "data": {"n": 50}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+        async with session.post(url, json={"initData": raw_init, "event": "tap", "data": {"n": 400}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
             if r.status == 200:
                 t_data = await r.json()
                 if t_data.get("ok") and t_data.get("data", {}).get("ok"):
                     gain = t_data.get("data", {}).get("gain", 0)
                     if gain > 0:
+                        res["tasks_claimed"] += 1
                         res["notes"].append(f"tap_+{gain:.2f}")
 
         # 4. Check & Link Wallet via TonConnect 2.0 Proof (if 24-word wallet present)
         try:
-            w_obj = ton_wallets.get(uid) or {}
+            w_obj = acc.get("ton_wallet") or ton_wallets.get(str(uid)) or ton_wallets.get(int(uid) if str(uid).isdigit() else 0) or {}
             raw_mn = w_obj.get("mnemonic") or w_obj.get("mnemonic_words")
             words = raw_mn.split() if isinstance(raw_mn, str) else (raw_mn or [])
             if len(words) == 24 and not acc.get("dillo_wallet_linked"):
@@ -2580,6 +2609,7 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
                                         wl_res = await r_wl.json()
                                         if wl_res.get("data", {}).get("linked"):
                                             acc["dillo_wallet_linked"] = True
+                                            res["tasks_claimed"] += 1
                                             res["notes"].append("ton_wallet_linked")
         except Exception as we:
             logger.debug(f"[{uid}] Dillo wallet link error: {we}")
@@ -2590,17 +2620,20 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
                 if r_t.status == 200:
                     t_res = await r_t.json()
                     t_items = t_res.get("data", {}).get("items", [])
-                    for t_item in t_items:
-                        if not t_item.get("done") and t_item.get("kind") == "bot":
+                    for t_item in t_items[:5]:
+                        if not t_item.get("done"):
                             t_id = t_item.get("id")
                             await session.post(url, json={"initData": raw_init, "event": "task_start", "data": {"id": t_id}}, headers=h, timeout=aiohttp.ClientTimeout(total=5))
-                            await asyncio.sleep(8)
+                            await asyncio.sleep(2)
                             async with session.post(url, json={"initData": raw_init, "event": "task_claim", "data": {"id": t_id}}, headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r_tc:
                                 if r_tc.status == 200:
                                     tc_res = await r_tc.json()
                                     if tc_res.get("data", {}).get("ok"):
                                         res["tasks_claimed"] += 1
                                         res["notes"].append(f"task_{t_id}")
+                                    elif tc_res.get("data", {}).get("error") == "gate":
+                                        res["notes"].append(f"gate_{t_id}")
+                                        continue
         except Exception:
             pass
 
@@ -2637,6 +2670,139 @@ async def sweep_dillo_tasks(session: aiohttp.ClientSession, uid: str, name: str,
     return res
 
 
+def _sync_sweep_hunter(uid: str, name: str, hunter_init: str, acc: dict) -> Dict[str, Any]:
+    res = {"bot": "Hunter Miner", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0}
+    jwt_cached = acc.get("hunter_jwt", "")
+    if not hunter_init and not jwt_cached:
+        res["notes"].append("missing_init_data")
+        return res
+
+    try:
+        from hunter_miner import HunterClient
+        username = acc.get("username", "")
+        client = HunterClient(uid, name, hunter_init, username=username, jwt_token=jwt_cached)
+        ok = client.authenticate()
+        if not ok:
+            res["notes"].append("auth_failed")
+            return res
+
+        res["success"] = True
+        if client.token:
+            acc["hunter_jwt"] = client.token
+
+        u_info = client.user_data
+        m_info = client.mining_data
+        bal = float(u_info.get("coin_balance", 0.0) or u_info.get("mining_balance", 0.0) or 0.0)
+
+        # 1. Welcome Bonus
+        if not u_info.get("welcome_bonus_claimed"):
+            wb_res = client.claim_welcome_bonus()
+            if wb_res.get("success"):
+                bal += 0.20
+                res["tasks_claimed"] += 1
+                res["notes"].append("welcome_+0.20")
+
+        # 2. Claim Finished Mining
+        if m_info.get("can_claim"):
+            cl_res = client.claim_mining()
+            if cl_res.get("success"):
+                c_amt = cl_res.get("mined_coins", 0)
+                bal += c_amt
+                res["tasks_claimed"] += 1
+                res["notes"].append(f"mined_+{c_amt:.4f}")
+
+        # 3. Start 12h Mining
+        if not m_info.get("mining_active") and m_info.get("can_start_mining", True):
+            st_res = client.start_mining()
+            if st_res.get("success"):
+                res["tasks_claimed"] += 1
+                res["notes"].append("mining_started")
+
+        # 4. Master Referral Earnings
+        if uid == MASTER_UID:
+            ref_res = client.claim_referral_earnings()
+            if ref_res.get("success") and ref_res.get("claimed_amount", 0) > 0:
+                c_ref = ref_res.get("claimed_amount", 0)
+                bal += c_ref
+                res["tasks_claimed"] += 1
+                res["notes"].append(f"ref_+{c_ref:.4f}")
+
+        # 5. Sweep dynamic tasks (community, partner, main)
+        for cat in ["community", "partner", "main"]:
+            try:
+                tasks = client.get_tasks(cat)
+                for t in tasks:
+                    t_id = t.get("id") or t.get("_id")
+                    if not t.get("completed") and t_id:
+                        verif = t.get("verification", False)
+                        t_url = t.get("url", "")
+
+                        # Ephemeral channel task handling if verification required
+                        if verif and t_url and "t.me/" in t_url and acc.get("session_string"):
+                            try:
+                                ch_clean = t_url.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").split("/")[0].split("?")[0]
+                                if ch_clean and not ch_clean.isdigit():
+                                    import asyncio
+                                    async def _do_channel_task():
+                                        from telethon import TelegramClient
+                                        from telethon.sessions import StringSession
+                                        from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
+                                        from telethon.tl.functions.messages import DeleteHistoryRequest
+                                        t_api_id = int(os.getenv("API_ID") or os.getenv("TELEGRAM_API_ID") or 2040)
+                                        t_api_hash = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or "5cd9e5bbfb572a4429a0c54774153b47"
+                                        cl = TelegramClient(StringSession(acc["session_string"]), t_api_id, t_api_hash)
+                                        await cl.connect()
+                                        if await cl.is_user_authorized():
+                                            ent = await cl.get_entity(ch_clean)
+                                            await cl(JoinChannelRequest(ent))
+                                            await asyncio.sleep(1.0)
+                                            # Complete task
+                                            cmp = client.complete_task(str(t_id))
+                                            # Immediately Leave & Revoke/Purge
+                                            try:
+                                                await cl(LeaveChannelRequest(ent))
+                                                await cl(DeleteHistoryRequest(peer=ent, max_id=0, revoke=True))
+                                            except Exception:
+                                                pass
+                                            await cl.disconnect()
+                                            return cmp
+                                        await cl.disconnect()
+                                        return {}
+                                    cmp_res = asyncio.run(_do_channel_task())
+                                else:
+                                    cmp_res = client.complete_task(str(t_id))
+                            except Exception:
+                                cmp_res = client.complete_task(str(t_id))
+                        else:
+                            cmp_res = client.complete_task(str(t_id))
+
+                        if cmp_res.get("success"):
+                            r_amt = cmp_res.get("reward", 0.002)
+                            bal += r_amt
+                            res["tasks_claimed"] += 1
+                            res["notes"].append(f"task_{t_id}")
+                            time.sleep(3.5)
+            except Exception:
+                pass
+
+        # 6. Automatic Withdrawal to TON Vault
+        if bal >= 0.05:
+            target_vault = PRIMARY_TON_WALLET
+            wd_res = client.withdraw_gram(bal, target_vault)
+            if wd_res.get("success"):
+                res["notes"].append(f"wd_{bal:.4f}_gram")
+
+        res["balance"] = bal
+    except Exception as e:
+        res["notes"].append(f"err: {str(e)[:40]}")
+    return res
+
+
+async def sweep_hunter_tasks(session: aiohttp.ClientSession, uid: str, name: str, hunter_init: str, acc: dict) -> Dict[str, Any]:
+    """Sweeps Hunter Miner (@GramHtrsbot) welcome bonus, 12h mining session, task claims, and on-chain withdrawal."""
+    return await asyncio.to_thread(_sync_sweep_hunter, uid, name, hunter_init, acc)
+
+
 # =============================================================================
 # 3. MAIN RUNNER (23-ACCOUNT PARALLEL PIPELINE)
 # =============================================================================
@@ -2670,70 +2836,101 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         # 1. ATF Miner
         atf_res = await sweep_atf_tasks(session, uid, name, merged_toks.get("atf_init_data", ""), merged_toks)
         account_report["results"]["atf"] = atf_res
+        logger.info(f"[{name}] (1/15) 🪙 ATF Miner: {atf_res.get('tasks_claimed', 0)} claimed ({', '.join(atf_res.get('notes', [])[:2]) or 'ok'})")
 
         # 2. Kynex Network
         kynex_res = await sweep_kynex_tasks(session, uid, name, merged_toks.get("kynex_init_data", ""), merged_toks)
         account_report["results"]["kynex"] = kynex_res
+        logger.info(f"[{name}] (2/15) 🌐 Kynex Network: {kynex_res.get('tasks_claimed', 0)} claimed ({', '.join(kynex_res.get('notes', [])[:2]) or 'ok'})")
 
         # 3. PepeGram
         pepe_init = merged_toks.get("pepegram_init_data") or merged_toks.get("pepe_init_data", "")
         pepe_res = await sweep_pepegram_tasks(session, uid, name, pepe_init, merged_toks)
         account_report["results"]["pepegram"] = pepe_res
+        logger.info(f"[{name}] (3/15) 🐸 PepeGram: {pepe_res.get('tasks_claimed', 0)} claimed ({', '.join(pepe_res.get('notes', [])[:2]) or 'ok'})")
 
         # 4. AdxEarn AI
         adx_init = merged_toks.get("adxearn_init_data") or merged_toks.get("adx_init_data", "")
         adx_res = await sweep_adxearn_tasks(session, uid, name, adx_init, merged_toks)
         account_report["results"]["adxearn"] = adx_res
+        logger.info(f"[{name}] (4/15) 🤖 AdxEarn AI: {adx_res.get('tasks_claimed', 0)} claimed ({', '.join(adx_res.get('notes', [])[:2]) or 'ok'})")
 
         # 5. Chicken Land
         chk_init = merged_toks.get("chickenland_init_data") or merged_toks.get("chicken_init_data", "")
         chicken_res = await sweep_chickenland_tasks(session, uid, name, chk_init, merged_toks)
         account_report["results"]["chickenland"] = chicken_res
+        logger.info(f"[{name}] (5/15) 🐔 Chicken Land: {chicken_res.get('tasks_claimed', 0)} claimed ({', '.join(chicken_res.get('notes', [])[:2]) or 'ok'})")
 
         # 6. EarnVault
         ev_init = merged_toks.get("earnvault_init_data", "")
         ev_res = await sweep_earnvault_tasks(session, uid, name, ev_init, merged_toks)
         account_report["results"]["earnvault"] = ev_res
+        logger.info(f"[{name}] (6/15) 🏦 EarnVault: {ev_res.get('tasks_claimed', 0)} claimed ({', '.join(ev_res.get('notes', [])[:2]) or 'ok'})")
 
         # 7. MexoEarn
         mx_tok = merged_toks.get("mexo_token") or merged_toks.get("mexo_init_data", "")
         mexo_res = await sweep_mexoearn_tasks(session, uid, name, mx_tok, merged_toks)
         account_report["results"]["mexoearn"] = mexo_res
+        logger.info(f"[{name}] (7/15) ⚡ MexoEarn: {mexo_res.get('tasks_claimed', 0)} claimed ({', '.join(mexo_res.get('notes', [])[:2]) or 'ok'})")
 
         # 8. MyAgeApp
         age_init = merged_toks.get("myage_init_data", "")
         age_res = await sweep_myage_tasks(session, uid, name, age_init, merged_toks)
         account_report["results"]["myage"] = age_res
+        logger.info(f"[{name}] (8/15) 🎂 MyAgeApp: {age_res.get('tasks_claimed', 0)} claimed ({', '.join(age_res.get('notes', [])[:2]) or 'ok'})")
 
         # 9. Lifetime Energy
         le_init = merged_toks.get("lifetime_energy_init_data") or merged_toks.get("lifetime_init_data", "")
         le_res = await sweep_lifetime_tasks(session, uid, name, le_init, merged_toks)
         account_report["results"]["lifetime"] = le_res
+        logger.info(f"[{name}] (9/15) 🔋 Lifetime Energy: {le_res.get('tasks_claimed', 0)} claimed ({', '.join(le_res.get('notes', [])[:2]) or 'ok'})")
 
         # 10. JVault Miner
         jv_init = merged_toks.get("jvault_init_data", "")
         jv_res = await sweep_jvault_tasks(session, uid, name, jv_init, merged_toks)
         account_report["results"]["jvault"] = jv_res
+        logger.info(f"[{name}] (10/15) 💎 JVault Miner: {jv_res.get('tasks_claimed', 0)} claimed ({', '.join(jv_res.get('notes', [])[:2]) or 'ok'})")
 
         # 11. TAVORA Node
         tav_tok = merged_toks.get("tavora_token") or merged_toks.get("tavora_init_data", "")
         tav_res = await sweep_tavora_tasks(session, uid, name, tav_tok, merged_toks)
         account_report["results"]["tavora"] = tav_res
+        logger.info(f"[{name}] (11/15) ⚡ TAVORA Node: {tav_res.get('tasks_claimed', 0)} claimed ({', '.join(tav_res.get('notes', [])[:2]) or 'ok'})")
 
         # 12. Victor's Company
         vic_init = merged_toks.get("victors_init_data") or merged_toks.get("victors_company_init_data", "")
         vic_res = await sweep_victors_tasks(session, uid, name, vic_init, merged_toks)
         account_report["results"]["victors"] = vic_res
+        logger.info(f"[{name}] (12/15) 🏢 Victor's Company: {vic_res.get('tasks_claimed', 0)} claimed ({', '.join(vic_res.get('notes', [])[:2]) or 'ok'})")
 
         # 13. AZM Miner (@AZMIR_Miner_BOT)
         azm_init = merged_toks.get("azm_init_data") or merged_toks.get("azm") or merged_toks.get("azmir") or ""
         azm_res = await sweep_azm_tasks(session, uid, name, azm_init, merged_toks)
         account_report["results"]["azm"] = azm_res
+        logger.info(f"[{name}] (13/15) 💎 AZM Miner: {azm_res.get('tasks_claimed', 0)} claimed ({', '.join(azm_res.get('notes', [])[:2]) or 'ok'})")
 
         # 14. Dillo Miner (@dillo_miner_bot)
         dillo_init = merged_toks.get("dillo_init_data") or merged_toks.get("dillo") or ""
         dillo_res = await sweep_dillo_tasks(session, uid, name, dillo_init, merged_toks)
         account_report["results"]["dillo"] = dillo_res
+        logger.info(f"[{name}] (14/15) ⛏️ Dillo Miner: {dillo_res.get('tasks_claimed', 0)} claimed ({', '.join(dillo_res.get('notes', [])[:2]) or 'ok'})")
+
+        # 15. Hunter Miner (@GramHtrsbot)
+        hunter_init = merged_toks.get("hunter_init_data") or merged_toks.get("hunter") or merged_toks.get("hunter_token") or ""
+        hunter_res = await sweep_hunter_tasks(session, uid, name, hunter_init, merged_toks)
+        account_report["results"]["hunter"] = hunter_res
+        logger.info(f"[{name}] (15/15) 🎯 Hunter Miner: {hunter_res.get('tasks_claimed', 0)} claimed ({', '.join(hunter_res.get('notes', [])[:2]) or 'ok'})")
+
+        # Propagate newly acquired JWT / refresh tokens to merged_toks and persistent cloud stores
+        if merged_toks.get("hunter_jwt"):
+            acc["hunter_jwt"] = merged_toks["hunter_jwt"]
+            if UPSTASH_URL and UPSTASH_TOKEN:
+                try:
+                    await session.post(f"{UPSTASH_URL}/set/fleet:tokens:{uid}:hunter_jwt", data=merged_toks["hunter_jwt"].encode("utf-8"), headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+                except Exception:
+                    pass
+        if acc.get("earnvault_refresh_token"):
+            merged_toks["earnvault_refresh_token"] = acc["earnvault_refresh_token"]
 
         # Sync tokens to Cloudflare Workers if newly refreshed
         await sync_token_to_cf(session, uid, merged_toks)
@@ -2751,8 +2948,19 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
 
 
 async def main():
+    target_accounts = list(ACCOUNTS)
+    for i, arg in enumerate(sys.argv):
+        if arg == "--uid" and i + 1 < len(sys.argv):
+            target_uids = sys.argv[i + 1].split(",")
+            target_accounts = [a for a in target_accounts if str(a.get("user_id")) in target_uids]
+        elif arg == "--limit" and i + 1 < len(sys.argv):
+            try:
+                target_accounts = target_accounts[:int(sys.argv[i + 1])]
+            except ValueError:
+                pass
+
     logger.info("=============================================================================")
-    logger.info(f"🎯 STARTING COMPLETE 14-BOT FLEET SIDE-TASK HARVEST ({len(ACCOUNTS)} ACCOUNTS)")
+    logger.info(f"🎯 STARTING COMPLETE 15-BOT FLEET SIDE-TASK HARVEST ({len(target_accounts)} ACCOUNTS)")
     logger.info("=============================================================================")
 
     conn = aiohttp.TCPConnector(limit=25, ttl_dns_cache=300)
@@ -2763,12 +2971,12 @@ async def main():
 
         # Concurrency semaphore of 5 to balance speed and stability
         sem = asyncio.Semaphore(5)
-        tasks = [process_account(session, acc, tokens_db, sem) for acc in ACCOUNTS]
+        tasks = [process_account(session, acc, tokens_db, sem) for acc in target_accounts]
         reports = await asyncio.gather(*tasks)
 
         # Print Summary
         logger.info("\n" + "=" * 80)
-        logger.info(f"📊 14-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(ACCOUNTS)} ACCOUNTS)")
+        logger.info(f"📊 15-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(target_accounts)} ACCOUNTS)")
         logger.info("=" * 80)
         total_tasks = 0
         for rep in reports:
@@ -2787,9 +2995,11 @@ async def main():
             tav_cl = res.get("tavora", {}).get("tasks_claimed", 0)
             vic_cl = res.get("victors", {}).get("tasks_claimed", 0)
             azm_cl = res.get("azm", {}).get("tasks_claimed", 0)
-            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + jv_cl + tav_cl + vic_cl + azm_cl
+            dillo_cl = res.get("dillo", {}).get("tasks_claimed", 0)
+            hntr_cl = res.get("hunter", {}).get("tasks_claimed", 0)
+            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + jv_cl + tav_cl + vic_cl + azm_cl + dillo_cl + hntr_cl
             total_tasks += acc_total
-            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} JV:{jv_cl} TVR:{tav_cl} VIC:{vic_cl} AZM:{azm_cl} | Tot: {acc_total}")
+            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} JV:{jv_cl} TVR:{tav_cl} VIC:{vic_cl} AZM:{azm_cl} DIL:{dillo_cl} HNT:{hntr_cl} | Tot: {acc_total}")
 
         logger.info("=" * 80)
         logger.info(f"🏁 GRAND TOTAL SIDE-TASKS/REWARDS CLAIMED: {total_tasks}")
@@ -2812,14 +3022,15 @@ async def main():
         vic_tot = sum(r["results"].get("victors", {}).get("tasks_claimed", 0) for r in reports)
         azm_tot = sum(r["results"].get("azm", {}).get("tasks_claimed", 0) for r in reports)
         dillo_tot = sum(r["results"].get("dillo", {}).get("tasks_claimed", 0) for r in reports)
+        hntr_tot = sum(r["results"].get("hunter", {}).get("tasks_claimed", 0) for r in reports)
         elapsed = time.time() - t_start
 
         if bot_token and notif_channel:
             short_card = (
-                f"⚡ <b>Fleet 14-Bot Auto-Harvest Complete</b>\n"
+                f"⚡ <b>Fleet 15-Bot Auto-Harvest Complete</b>\n"
                 f"• <b>Accounts Farmed:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code>\n"
                 f"• <b>Tasks & Rewards Claimed:</b> <code>{total_tasks} Total Claimed</code>\n"
-                f"• <b>Active Protocols (14/14):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • JV:{jv_tot} • TVR:{tav_tot} • VIC:{vic_tot} • AZM:{azm_tot} • DIL:{dillo_tot}</code>\n"
+                f"• <b>Active Protocols (15/15):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • JV:{jv_tot} • TVR:{tav_tot} • VIC:{vic_tot} • AZM:{azm_tot} • DIL:{dillo_tot} • HNT:{hntr_tot}</code>\n"
                 f"• <b>Duration:</b> <code>{elapsed:.1f}s</code> | <b>Node:</b> <code>GitHub Actions Cloud Runner & Edge Mesh</code>\n"
                 f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
             )
