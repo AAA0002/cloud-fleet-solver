@@ -21,7 +21,7 @@ and leftover third-party sponsor channels across all fleet accounts:
    - Purges orphaned lock keys (lock:* or fleet:lock:*)
 
 3. Telegram Ephemeral Dialog & Sponsor Purger (Rule 8 & 11):
-   - Strict whitelisting: NEVER deletes official fleet/admin channels or active 13 bots
+   - Strict whitelisting: NEVER deletes official fleet/admin channels or active 14 bots
    - Detects and leaves all non-whitelisted sponsor channels joined during tasks
    - Revokes and purges dialogs for defunct/promo bots (e.g. Gram Master, Grouche, etc.)
    - Keeps the user's Telegram chat list 100% clean and pristine
@@ -98,11 +98,12 @@ OFFICIAL_USERNAMES: Set[str] = {
     # System & Admin Bots
     "myagyai", "my_router_ai_bot", "aaapremiumappsbot", "aaagmailbot", "aaa_instant_mail_bot",
     "botfather", "spambot", "stickers", "telegram",
-    # Active 13 Legitimate Mining Bots & Official Channels
+    # Active 14 Legitimate Mining Bots & Official Channels
     "atfminers_bot", "atf_airdrop_bot", "kynex_miningbot", "pepe_gram_bot",
     "adxearnaibot", "adxearnai", "chickenlandbot", "earnvaultapp_bot", "earnvaulte", "mexoearni_bot",
     "myageapp", "appmyage", "lifetime_energy_bot", "jvaultminerbot", "tavoranode_bot",
     "victors_company_bot", "azmir_miner_bot", "azmir_channel", "azmir_chat", "azmir_group", "web3primeteam", "solanamemes001",
+    "dillo_miner_bot", "dillotonlive",
     # Official Communities & Channels
     "aaaautominer", "aaaautomining", "aaa_activity", "rootofhunter_top",
     "androforever_oficial", "theboss_victor", "victors_company", "vicwithdrawals",
