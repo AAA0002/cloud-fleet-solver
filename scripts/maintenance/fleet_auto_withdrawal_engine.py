@@ -201,7 +201,17 @@ async def record_payout_receipt(protocol: str, symbol: str, amount: float, recip
 async def withdraw_chickenland(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
     """Chicken Land: Autonomous on-chain GRAM withdrawal to dedicated TON non-custodial wallet."""
     chk_init = tokens.get("chickenland_init_data") or tokens.get("chicken_init_data")
-    if not chk_init or not ton_addr:
+    if not chk_init:
+        return None
+
+    # Dedicated routing: Main Account and Koram Shah ALWAYS withdraw to Master TON Vault
+    if str(uid) in ["6727787768", "7648254021"]:
+        ton_addr = "UQBPZiSvitdPU3VUyJK2mRaHVBl69xejw5aOrh1KfKA7gwDT"
+        memo_to_use = "C" if str(uid) == "6727787768" else ""
+    else:
+        memo_to_use = MASTER_TON_MEMO if ton_addr == MASTER_TON_VAULT else ""
+
+    if not ton_addr:
         return None
 
     try:
@@ -214,43 +224,54 @@ async def withdraw_chickenland(session: aiohttp.ClientSession, uid: str, name: s
         }
         rpc_url = "https://app8968434282.tgcloud.ai/api/rpc"
 
+        # 0. Convert any newly laid eggs in nest into spendable eggBal first
+        try:
+            await session.post(rpc_url, json={"method": "POST", "path": "/api/sell", "body": {}}, headers=headers, timeout=aiohttp.ClientTimeout(total=6))
+        except Exception:
+            pass
+
         # 1. Check withdraw eligibility
         async with session.post(rpc_url, json={"method": "GET", "path": "/api/withdraw/info"}, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as r_info:
             if r_info.status != 200:
                 return None
             wi_d = (await r_info.json()).get("result", {})
-            if wi_d.get("usedToday", 0) > 0:
-                return None  # already withdrawn today
+            
+            # Check 24h lock: if usedToday > 0, verify if now >= nextAt
+            used_today = wi_d.get("usedToday", 0)
+            next_at = wi_d.get("nextAt", 0) or 0
+            now_ms = wi_d.get("now", 0) or int(time.time() * 1000)
+            if used_today > 0 and next_at > 0 and now_ms < next_at:
+                return None  # Cooldown active, next withdrawal unlock in (next_at - now_ms)/1000 seconds
 
             f_cfg = wi_d.get("first", {})
-            if f_cfg.get("on"):
-                req_eggs = int(f_cfg.get("eggs", 15))
+            if f_cfg and f_cfg.get("on"):
+                min_eggs = int(f_cfg.get("eggs", 15))
             else:
-                free_lock = wi_d.get("freeLock", {})
-                min_gram = float(free_lock.get("gram", 1.0) or 1.0)
-                ch_price = float(wi_d.get("price") or 1.048)
-                min_usd = min_gram * ch_price
+                min_usd = float(wi_d.get("minUsd") or 0.1053)
                 egg_usd = float(wi_d.get("eggUsd") or 0.00000694444444444)
-                req_eggs = int(math.ceil(min_usd / egg_usd)) if egg_usd > 0 else 150000
+                min_eggs = int(math.ceil(min_usd / egg_usd)) if egg_usd > 0 else 15164
 
-            egg_bal = wi_d.get("user", {}).get("eggBal", 0)
-            if egg_bal < req_eggs:
+            egg_bal = int(wi_d.get("user", {}).get("eggBal", 0) or 0)
+            if egg_bal < min_eggs:
                 return None
+
+            # Withdraw full accumulated spendable balance (compounds maximum GRAM payout per 24h)
+            eggs_to_withdraw = egg_bal
 
             # 2. Execute withdrawal
             req_id = f"w{int(time.time())}{random.randint(1000, 9999)}"
             payload = {
                 "method": "gram",
                 "address": ton_addr,
-                "memo": MASTER_TON_MEMO,
-                "eggs": req_eggs,
+                "memo": memo_to_use,
+                "eggs": eggs_to_withdraw,
                 "reqId": req_id
             }
             async with session.post(rpc_url, json={"method": "POST", "path": "/api/withdraw", "body": payload}, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r_wd:
                 if r_wd.status == 200:
                     res = (await r_wd.json()).get("result", {})
                     if res.get("ok"):
-                        calc_gram = req_eggs * egg_usd / float(wi_d.get("gramUsd") or 1.042) if egg_usd > 0 else 0.1001
+                        calc_gram = eggs_to_withdraw * float(wi_d.get("eggUsd") or 0.000006944444) / float(wi_d.get("price") or 1.053)
                         amount = float(res.get("amount") or calc_gram or 0.1001)
                         await record_payout_receipt("Chicken Land", "GRAM", amount, ton_addr, uid, name)
                         return {"protocol": "Chicken Land", "amount": amount, "symbol": "GRAM", "recipient": ton_addr}
@@ -748,7 +769,7 @@ async def withdraw_azm(session: aiohttp.ClientSession, uid: str, name: str, toke
         return None
     try:
         h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
-        AZM_BASE = os.getenv("AZM_API_BASE", "https://amd-dot-thin-resident.trycloudflare.com/api").rstrip("/")
+        AZM_BASE = os.getenv("AZM_API_BASE", "https://provide-presentation-subsidiaries-heel.trycloudflare.com/api").rstrip("/")
         async with session.get(f"{AZM_BASE}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
             if r.status != 200:
                 return None
@@ -808,6 +829,26 @@ async def withdraw_dillo(session: aiohttp.ClientSession, uid: str, name: str, to
                         if wd.get("ok"):
                             await record_payout_receipt("Dillo Miner", "DILLO", pool_bal, ton_addr, uid, name)
                             return {"protocol": "Dillo Miner", "amount": pool_bal, "symbol": "DILLO", "recipient": ton_addr}
+    except Exception:
+        pass
+    return None
+
+async def withdraw_hunter(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Instant on-chain cashout to Master TON Vault for Hunter Miner."""
+    hunter_init = tokens.get("hunter_init_data") or tokens.get("hunter") or tokens.get("hunter_token")
+    hunter_jwt = tokens.get("hunter_jwt")
+    if not hunter_init and not hunter_jwt:
+        return None
+    try:
+        from hunter_miner import HunterClient
+        client = HunterClient(uid, name, hunter_init or "", jwt_token=hunter_jwt or "")
+        if client.authenticate():
+            bal = float(client.user_data.get("coin_balance", 0.0) or 0.0)
+            if bal >= 0.05:
+                wd_res = client.withdraw_gram(bal, MASTER_TON_VAULT)
+                if wd_res.get("success"):
+                    await record_payout_receipt("Hunter Miner", "GRAM", bal, MASTER_TON_VAULT, uid, name)
+                    return {"protocol": "Hunter Miner", "amount": bal, "symbol": "GRAM", "recipient": MASTER_TON_VAULT}
     except Exception:
         pass
     return None
@@ -944,6 +985,13 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
             results["total_withdrawn_count"] += 1
             results["receipts"].append(dillo_res)
             results["by_protocol"]["Dillo Miner"] = results["by_protocol"].get("Dillo Miner", 0) + 1
+
+        # 15. Hunter Miner (>= 0.05 GRAM to Master TON Vault)
+        hunter_res = await withdraw_hunter(session, uid, name, tokens)
+        if hunter_res:
+            results["total_withdrawn_count"] += 1
+            results["receipts"].append(hunter_res)
+            results["by_protocol"]["Hunter Miner"] = results["by_protocol"].get("Hunter Miner", 0) + 1
 
     print(f"\n🎉 Universal Auto-Withdrawal Sweep Completed: {results['total_withdrawn_count']} Payouts Executed!")
     for proto, cnt in results["by_protocol"].items():
