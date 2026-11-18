@@ -88,7 +88,10 @@ def main():
     total_new_tokens = 0
 
     for k in keys:
-        uid = k.split(":")[-1]
+        parts = k.split(":")
+        if len(parts) != 3 or not parts[2].isdigit():
+            continue
+        uid = parts[2]
         try:
             req_get = urllib.request.Request(
                 f"{UPSTASH_URL}/get/{k}",
