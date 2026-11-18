@@ -20,6 +20,9 @@ import argparse
 from urllib.parse import parse_qs, unquote, urlencode
 import urllib.request
 import urllib.error
+import zipfile
+import io
+import ssl
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Tuple
 
@@ -149,7 +152,7 @@ def get_active_render_node() -> str:
 
 
 def load_accounts() -> List[Dict[str, Any]]:
-    """Load accounts from local accounts.json or cloud fleet:wallets_vault:* cache."""
+    """Load accounts from local accounts.json, Cloudflare backup.zip, or Upstash Redis."""
     acc_path = os.path.join(BASE_DIR, "accounts.json")
     if os.path.exists(acc_path):
         try:
@@ -158,7 +161,29 @@ def load_accounts() -> List[Dict[str, Any]]:
         except Exception:
             pass
 
-    # Cloud fallback 1: Fetch from fleet:wallets_vault:* in Upstash Redis
+    # Cloud fallback 1: Cloudflare Edge mesh backup.zip (runs on ephemeral cloud runners)
+    ssl_ctx = ssl._create_unverified_context()
+    for cf_url in [
+        "https://restore-agy.aaaai2.workers.dev",
+        "https://restore-agy.aaa-bot.workers.dev",
+        "https://restore-agy.aaa222.workers.dev",
+        "https://restore-agy.aaaai.workers.dev",
+        "https://restore-agy.agorameet.workers.dev"
+    ]:
+        try:
+            req = urllib.request.Request(f"{cf_url}/backup.zip", headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as resp:
+                if resp.status == 200:
+                    zip_bytes = resp.read()
+                    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                        if "accounts.json" in zf.namelist():
+                            cf_accs = json.loads(zf.read("accounts.json").decode("utf-8"))
+                            if isinstance(cf_accs, list) and cf_accs:
+                                return cf_accs
+        except Exception:
+            continue
+
+    # Cloud fallback 2: Fetch from fleet:wallets_vault:* in Upstash Redis
     u_url = UPSTASH_URL.rstrip("/")
     if u_url and UPSTASH_TOKEN:
         try:
@@ -172,7 +197,7 @@ def load_accounts() -> List[Dict[str, Any]]:
         except Exception as e:
             print(f"⚠️ Upstash wallets_vault query note: {e}")
 
-        # Cloud fallback 2: Fetch from fleet:tokens:* in Upstash Redis
+        # Cloud fallback 3: Fetch from fleet:tokens:* in Upstash Redis
         try:
             url = f"{u_url}/keys/fleet:tokens:*"
             r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
@@ -184,13 +209,13 @@ def load_accounts() -> List[Dict[str, Any]]:
         except Exception as e:
             print(f"⚠️ Upstash fleet:tokens query note: {e}")
 
-    # Cloud fallback 3: Autonomous static SSOT of the 23 verified fleet accounts
+    # Cloud fallback 4: Autonomous static SSOT of the 23 verified fleet accounts
     FLEET_23_UIDS = [
-        "6727787768", "7648254021", "8826375659", "8450010161", "8782429452",
-        "7734849205", "8025472383", "8851426148", "8203342513", "8190649727",
-        "7487048946", "8741547543", "8515097495", "8754160459", "8292850989",
-        "8706338304", "8745914619", "8486958448", "8448460677", "8705948924",
-        "7749125802", "8649988225", "8858823950"
+        "6727787768", "7487048946", "7648254021", "7734849205", "7749125802",
+        "7954290138", "8025472383", "8190649727", "8203342513", "8450010161",
+        "8609131528", "8669217201", "8727040932", "8741547543", "8782429452",
+        "8826375659", "8841038141", "8851426148", "8937908003", "8972499908",
+        "8975442879", "9106746905", "9272631973"
     ]
     return [{"user_id": uid, "name": f"Account {uid}"} for uid in FLEET_23_UIDS]
 
@@ -220,10 +245,11 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
             data.get("chickenland_init_data"),
             data.get("jvault_init_data"),
             data.get("azm_init_data"),
-            data.get("dillo_init_data")
+            data.get("dillo_init_data"),
+            data.get("hunter_init_data")
         ]
 
-        min_auth_date = 0
+        auth_dates = []
         for tok in sample_tokens:
             if tok and isinstance(tok, str) and "auth_date=" in tok:
                 qs = parse_qs(tok)
@@ -231,13 +257,14 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
                 if ad_list:
                     try:
                         ad = int(ad_list[0])
-                        if min_auth_date == 0 or ad < min_auth_date:
-                            min_auth_date = ad
+                        if ad > 0:
+                            auth_dates.append(ad)
                     except ValueError:
                         pass
 
-        if min_auth_date > 0:
-            age_hours = round((now - min_auth_date) / 3600.0, 2)
+        if auth_dates:
+            newest_auth = max(auth_dates)
+            age_hours = round((now - newest_auth) / 3600.0, 2)
             remaining_hours = max(0.0, round(24.0 - age_hours, 2))
         elif synced_at > 0:
             age_hours = round((now - synced_at) / 3600.0, 2)
@@ -263,6 +290,7 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
             "has_tavora": bool(data.get("tavora_init_data")),
             "has_azm": bool(data.get("azm_init_data")),
             "has_dillo": bool(data.get("dillo_init_data")),
+            "has_hunter": bool(data.get("hunter_init_data")),
             "name": data.get("name", "Unknown")
         }
     except Exception as e:
@@ -378,6 +406,7 @@ def main():
     parser = argparse.ArgumentParser(description="Autonomous Token Expiration Watchdog")
     parser.add_argument("--force-refresh", action="store_true", help="Force trigger token refresh regardless of age")
     parser.add_argument("--no-notify", action="store_true", help="Suppress Telegram alert channel notification")
+    parser.add_argument("--check-only", action="store_true", help="Audit token freshness without re-triggering cloud refresher")
     args = parser.parse_args()
 
     print("🔍 Starting Autonomous Cloud Token Expiration Audit...")
@@ -443,8 +472,11 @@ def main():
     needs_refresh = (critical > 0) or (expiring >= 3) or (avg_age >= MAX_TOKEN_AGE_HOURS) or args.force_refresh
 
     if needs_refresh:
-        print(f"\n🚨 Token expiration threshold exceeded ({critical} critical, {expiring} expiring).")
-        healed = trigger_cloud_token_refresh(render_node)
+        if args.check_only:
+            print(f"\n⚠️ Token audit note: {critical} critical, {expiring} expiring (check-only mode; auto-refresh skipped).")
+        else:
+            print(f"\n🚨 Token expiration threshold exceeded ({critical} critical, {expiring} expiring).")
+            healed = trigger_cloud_token_refresh(render_node)
     else:
         print("\n🎉 All tokens are within safe operating lifespan. No cloud refresh required.")
 
