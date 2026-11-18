@@ -83,10 +83,13 @@ TAVORA_REF = "ref_MW0MB8RV"
 VICTORS_REF = "ref_9DB8C58014"
 AZM_BOT = "AZMIR_Miner_BOT"
 AZM_REF = "6727787768"
-AZM_APP_URL = os.getenv("AZM_APP_URL", "https://amd-dot-thin-resident.trycloudflare.com/")
+AZM_APP_URL = os.getenv("AZM_APP_URL", "https://provide-presentation-subsidiaries-heel.trycloudflare.com/")
 DILLO_BOT = "dillo_miner_bot"
 DILLO_REF = "6727787768"
 DILLO_APP_URL = "https://dillo-miner-bot.ih0st.app/#/"
+HUNTER_BOT = "GramHtrsbot"
+HUNTER_REF = "6727787768"
+HUNTER_APP_URL = "https://huntrs.up.railway.app"
 
 
 def robust_json_loads(val):
@@ -110,19 +113,43 @@ def robust_json_loads(val):
 
 
 def load_accounts():
-    """Loads accounts from accounts.json, Upstash Redis, or environment."""
+    """Loads accounts from accounts.json, Cloudflare backup.zip, Upstash Redis, or environment."""
+    import urllib.request
+    import zipfile
+    import io
+    import ssl
+
     acc_path = os.path.join(BASE_DIR, "accounts.json")
     if os.path.exists(acc_path):
         try:
             with open(acc_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                accs = json.load(f)
+                if isinstance(accs, list) and accs:
+                    return accs
         except Exception as e:
             print(f"Error loading accounts.json: {e}")
+
+    # Fallback to Cloudflare Edge mesh backup.zip (runs on ephemeral cloud runners)
+    ssl_ctx = ssl._create_unverified_context()
+    for cf_url in CF_NODES:
+        try:
+            req = urllib.request.Request(f"{cf_url}/backup.zip", headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+            with urllib.request.urlopen(req, timeout=12, context=ssl_ctx) as resp:
+                if resp.status == 200:
+                    zip_bytes = resp.read()
+                    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                        if "accounts.json" in zf.namelist():
+                            cf_accs = json.loads(zf.read("accounts.json").decode("utf-8"))
+                            if isinstance(cf_accs, list) and cf_accs:
+                                print(f"✅ Loaded {len(cf_accs)} accounts from Cloudflare Edge backup.zip ({cf_url})")
+                                return cf_accs
+        except Exception as e:
+            print(f"⚠️ Cloudflare backup.zip load note ({cf_url}): {e}")
+            continue
 
     # Fallback to Upstash Redis fleet:accounts
     if UPSTASH_URL and UPSTASH_TOKEN:
         try:
-            import urllib.request
             req = urllib.request.Request(
                 f"{UPSTASH_URL}/get/fleet:accounts",
                 headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
@@ -194,13 +221,17 @@ async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: s
     # 2. Upstash Redis REST (Atomic single-key set)
     if UPSTASH_URL and UPSTASH_TOKEN:
         try:
-            await session.post(
+            async with session.post(
                 f"{UPSTASH_URL}/set/fleet:tokens:{uid}",
                 data=json.dumps(payload),
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
                 timeout=aiohttp.ClientTimeout(total=5)
-            )
-            print(f"  ✅ Synced to Upstash Redis (fleet:tokens:{uid})")
+            ) as up_resp:
+                if up_resp.status in (200, 201):
+                    print(f"  ✅ Synced to Upstash Redis (fleet:tokens:{uid})")
+                else:
+                    up_t = await up_resp.text()
+                    print(f"  ⚠️ Upstash Redis sync note ({up_resp.status}): {up_t[:100]}")
 
             # Also sync into monolithic miniapp_tokens dictionary for runner compatibility
             try:
@@ -246,6 +277,16 @@ async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: s
                     )
                 except Exception:
                     pass
+            if tokens.get("hunter_init_data"):
+                try:
+                    await session.post(
+                        f"{UPSTASH_URL}/set/fleet:tokens:{uid}:hunter_init_data",
+                        data=tokens["hunter_init_data"],
+                        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+                        timeout=aiohttp.ClientTimeout(total=3)
+                    )
+                except Exception:
+                    pass
         except Exception as ue:
             print(f"  ⚠️ Upstash sync note: {ue}")
 
@@ -273,6 +314,14 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
             return None
         try:
             p = urllib.parse.urlparse(str(url_str))
+            if "trycloudflare.com" in p.netloc and UPSTASH_URL and UPSTASH_TOKEN:
+                try:
+                    azm_base = f"{p.scheme}://{p.netloc}/api"
+                    s_req = urllib.request.Request(f"{UPSTASH_URL}/set/fleet:azm_api_base", data=azm_base.encode(), headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+                    with urllib.request.urlopen(s_req, timeout=3):
+                        pass
+                except Exception:
+                    pass
             frag_str = p.fragment
             if "?" in frag_str:
                 frag_str = frag_str.split("?", 1)[1]
@@ -342,7 +391,7 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
                 pass
 
     # Strategy A: RequestAppWebViewRequest with short names
-    names_to_try = candidate_short_names or ["app", "play", "myapp", "miniapp", "bot", "game"]
+    names_to_try = candidate_short_names or ["app"]
     for sn in names_to_try:
         try:
             req_p = {
@@ -352,7 +401,7 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
             }
             if start_param:
                 req_p["start_param"] = str(start_param)
-            res = await client(RequestAppWebViewRequest(**req_p))
+            res = await asyncio.wait_for(client(RequestAppWebViewRequest(**req_p)), timeout=5.0)
             tok = extract_from_url(getattr(res, "url", None))
             if tok:
                 return tok
@@ -361,7 +410,7 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
 
     # Strategy B: Bot Menu Button
     try:
-        menu = await client(functions.bots.GetBotMenuButtonRequest(user_id=bot_in))
+        menu = await asyncio.wait_for(client(functions.bots.GetBotMenuButtonRequest(user_id=bot_in)), timeout=4.0)
         menu_btn = getattr(menu, "button", None)
         if menu_btn and hasattr(menu_btn, "url") and menu_btn.url:
             req_p = {
@@ -372,7 +421,7 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
             }
             if start_param:
                 req_p["start_param"] = str(start_param)
-            res = await client(RequestWebViewRequest(**req_p))
+            res = await asyncio.wait_for(client(RequestWebViewRequest(**req_p)), timeout=5.0)
             tok = extract_from_url(getattr(res, "url", None))
             if tok:
                 return tok
@@ -419,7 +468,7 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
             }
             if start_param:
                 req_p["start_param"] = str(start_param)
-            res = await client(RequestWebViewRequest(**req_p))
+            res = await asyncio.wait_for(client(RequestWebViewRequest(**req_p)), timeout=5.0)
             tok = extract_from_url(getattr(res, "url", None))
             if tok:
                 return tok
@@ -440,7 +489,15 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
 
     is_master = (acc_uid == str(REPORT_CHAT_ID) or acc_uid == "6727787768")
     print(f"\n🚀 [{acc_name} (ID: {acc_uid}{' - 👑 Master' if is_master else ''})] Connecting MTProto...")
-    cl = TelegramClient(StringSession(acc_sess), API_ID, API_HASH)
+    cl = TelegramClient(
+        StringSession(acc_sess),
+        API_ID,
+        API_HASH,
+        flood_sleep_threshold=10,
+        request_retries=1,
+        connection_retries=2,
+        timeout=10
+    )
     try:
         connected = False
         for attempt in range(1, 4):
@@ -601,7 +658,7 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
         # 14. AZM Miner (@AZMIR_Miner_BOT)
         azm_p = None if is_master else AZM_REF
         azm_url = f"{AZM_APP_URL}?ref={AZM_REF}" if not is_master else AZM_APP_URL
-        azm_tok = await extract_bot_webapp_token(cl, AZM_BOT, start_param=azm_p, default_url=azm_url, candidate_short_names=["app"], prefer_direct_url=True)
+        azm_tok = await extract_bot_webapp_token(cl, AZM_BOT, start_param=azm_p, default_url=azm_url, candidate_short_names=["app"], prefer_direct_url=False)
         if azm_tok:
             tokens["azm_init_data"] = azm_tok
             tokens["azm"] = azm_tok
@@ -616,6 +673,29 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
             tokens["dillo_init_data"] = dillo_tok
             tokens["dillo"] = dillo_tok
             print(f"  ⛏️ Dillo Miner: Collected")
+        await asyncio.sleep(0.5)
+
+        # 16. Hunter Miner (@GramHtrsbot)
+        hunter_p = None if is_master else HUNTER_REF
+        hunter_tok = await extract_bot_webapp_token(cl, HUNTER_BOT, start_param=hunter_p, default_url=HUNTER_APP_URL, candidate_short_names=["app"], prefer_direct_url=False)
+        if hunter_tok:
+            tokens["hunter_init_data"] = hunter_tok
+            tokens["hunter"] = hunter_tok
+            try:
+                from hunter_miner import HunterClient
+                loop = asyncio.get_running_loop()
+                def _get_h_jwt():
+                    hc = HunterClient(uid=str(acc_uid), name=acc_name, init_data=hunter_tok)
+                    if hc.authenticate() and hc.token:
+                        return hc.token
+                    return None
+                h_jwt = await loop.run_in_executor(None, _get_h_jwt)
+                if h_jwt:
+                    tokens["hunter_jwt"] = h_jwt
+                    print(f"  🎯 Hunter Miner: 7-Day JWT Issued ✅")
+            except Exception:
+                pass
+            print(f"  🎯 Hunter Miner: Collected")
         await asyncio.sleep(0.5)
 
         # Strict Ephemeral Policy (Rule 11): Token refresh is 100% read-only WebApp querying.
@@ -648,8 +728,10 @@ async def main():
     async with aiohttp.ClientSession() as session:
         for idx, acc in enumerate(accounts, 1):
             try:
-                await extract_account_tokens(acc, session)
-                await asyncio.sleep(1.5)
+                await asyncio.wait_for(extract_account_tokens(acc, session), timeout=90.0)
+                await asyncio.sleep(1.0)
+            except asyncio.TimeoutError:
+                print(f"[{acc.get('name')}] Timed out after 90s, continuing to next account...")
             except Exception as e:
                 print(f"Error processing account {acc.get('name')}: {e}")
 
