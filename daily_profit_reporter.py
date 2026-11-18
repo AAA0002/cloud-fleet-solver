@@ -173,7 +173,8 @@ async def get_fleet_mining_totals() -> dict:
         "tavora": 0.0,
         "victors": 0.0,
         "azm": 0.0,
-        "dillo": 0.0
+        "dillo": 0.0,
+        "hunter": 0.0
     }
     rep_file = os.path.join(BASE_DIR, "live_farming_and_sidetasks_report.json")
     if os.path.exists(rep_file):
@@ -293,6 +294,15 @@ async def get_fleet_mining_totals() -> dict:
                                 m = re.search(r"([\d\.]+)\s*DILLO", core_str)
                                 if m: totals["dillo"] += float(m.group(1))
 
+                        # 16. Hunter Miner
+                        elif "hunter" in b_name.lower():
+                            if isinstance(core, dict):
+                                try: totals["hunter"] += float(core.get("balance", 0) or core.get("coin_balance", 0) or 0)
+                                except Exception: pass
+                            else:
+                                m = re.search(r"([\d\.]+)\s*GRAM", core_str)
+                                if m: totals["hunter"] += float(m.group(1))
+
 
         except Exception:
             pass
@@ -322,6 +332,8 @@ async def get_fleet_mining_totals() -> dict:
                     totals["azm"] = sum(float(a.get("azm_balance", 0) or 0) for a in accs)
                 if totals.get("dillo", 0.0) == 0.0:
                     totals["dillo"] = sum(float(a.get("dillo_balance", 0) or 0) for a in accs)
+                if totals.get("hunter", 0.0) == 0.0:
+                    totals["hunter"] = sum(float(a.get("hunter_balance", 0) or 0) for a in accs)
         except Exception:
             pass
             
@@ -508,7 +520,7 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• *Live On-Chain Balance:* `{wallet_bnb:.6f} BNB` (`~${wallet_usd:.2f} USD` / `~৳{wallet_bdt:.0f} BDT`)\n"
             f"• *Historical Distributions:* `{total_payouts_count} payouts` totaling `{total_payouts_bnb:.6f} BNB`\n"
             f"• *Live BNB Price:* `${bnb_price:.2f} USD`\n\n"
-            f"💎 *2. Multi-Chain 14-Bot Autonomous Mining Treasury:*\n"
+            f"💎 *2. Multi-Chain 15-Bot Autonomous Mining Treasury:*\n"
             f"• *ATF Miner:* `{fleet_totals['atf']:,.2f} ATF` mined (Levels up to 160+, Deterministic Math Solver)\n"
             f"• *Kynex Network:* `{fleet_totals['knx']:,.2f} KNX` mined (Firebase RTDB Node Auto-Claim)\n"
             f"• *PepeGram:* `{fleet_totals['pepe']:,.2f} PEPE` mined (6h Cycles & Power Boosts)\n"
@@ -523,6 +535,7 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• *Victor's Company:* `{fleet_totals['victors']:,.0f} Coins` (Autonomous Mining, Shifts & Referral Commissions)\n"
             f"• *AZM Miner:* `{fleet_totals['azm']:,.2f} AZM` (TON Jetton Protocol, 15 AZM/h Active Mining, Streaks & Harvests)\n"
             f"• *Dillo Miner:* `{fleet_totals['dillo']:,.2f} DILLO` (TON Jetton Protocol, 2,400 DILLO/d Passive Farm, Energy Taps & Streaks)\n"
+            f"• *Hunter Miner:* `{fleet_totals.get('hunter', 0.0):,.4f} GRAM` (TON Jetton Protocol, 12h Mining Cycles, Tasks & Instant TON Cashouts)\n"
             f"• *On-Chain Target TON:* `{TON_PRIMARY_WALLET}`\n"
             f"• *Live On-Chain TON Balance:* `{wallet_ton:.4f} TON` (`~${wallet_ton_usd:.2f} USD` / `~৳{wallet_ton_bdt:.0f} BDT`)\n"
             f"• *TON Price (TonAPI):* `${ton_price:.2f} USD`\n\n"
