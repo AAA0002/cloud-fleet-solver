@@ -35,6 +35,7 @@ import json
 import math
 import time
 import base64
+import hashlib
 import random
 import urllib.parse
 import argparse
@@ -313,10 +314,13 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
     cherry_init = tokens.get("cherry_init_data") or tokens.get("cherry") or tokens.get("cherryplay_init_data")
     if cherry_init:
         try:
+            clean_ch = cherry_init[4:].strip() if cherry_init.startswith("tma ") else cherry_init.strip()
+            dev_id = hashlib.sha256(f"cherry_dev_{account_id}".encode()).hexdigest()[:36]
             h = {
                 "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36",
                 "Accept": "application/json",
-                "x-auth": cherry_init,
+                "Authorization": f"tma {clean_ch}",
+                "X-Device": dev_id,
                 "Origin": "https://cherryearn.site",
                 "Referer": "https://cherryearn.site/"
             }
