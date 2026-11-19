@@ -65,8 +65,9 @@ EARNVAULT_BOT = "EarnVaultApp_bot"
 MEXOEARN_BOT = "MexoEarni_bot"
 MYAGE_BOT = "MyAgeApp"
 LIFETIME_BOT = "lifetime_energy_bot"
-JVAULT_BOT = "JVaultMinerBot"
-TAVORA_BOT = "TavoraNode_Bot"
+CHERRY_BOT = "CherryPlayBot"
+CHERRY_REF = "r9bsfi3a8c"
+CHERRY_APP_URL = "https://cherryearn.site"
 VICTORS_BOT = "Victors_Company_bot"
 
 ATF_REF = "6727787768"
@@ -78,8 +79,6 @@ EARNVAULT_REF = "6727787768"
 MEXOEARN_REF = "6727787768"
 MYAGE_REF = "r6727787768"
 LIFETIME_REF = "6727787768"
-JVAULT_REF = "6727787768"
-TAVORA_REF = "ref_MW0MB8RV"
 VICTORS_REF = "ref_9DB8C58014"
 AZM_BOT = "AZMIR_Miner_BOT"
 AZM_REF = "6727787768"
@@ -615,37 +614,19 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
             print(f"  ⚡ Lifetime Energy: Collected")
         await asyncio.sleep(0.5)
 
-        # 11. JVault Miner (@JVaultMinerBot)
-        jv_p = None if is_master else JVAULT_REF
-        jv_tok = await extract_bot_webapp_token(cl, JVAULT_BOT, start_param=jv_p, default_url="https://jvaultminer.world/", candidate_short_names=["app", "start"], prefer_direct_url=True)
-        if jv_tok:
-            tokens["jvault_init_data"] = jv_tok
-            tokens["jvault_user_id"] = f"usr_{acc_uid}"
-            print(f"  💎 JVault Miner: Collected")
+        # 11. Cherry Play (@CherryPlayBot)
+        cherry_p = CHERRY_REF
+        cherry_tok = await extract_bot_webapp_token(cl, CHERRY_BOT, start_param=cherry_p, default_url=CHERRY_APP_URL, candidate_short_names=["play", "app"], prefer_direct_url=True)
+        if not cherry_tok:
+            cherry_tok = await extract_bot_webapp_token(cl, CHERRY_BOT, start_param=cherry_p, default_url=CHERRY_APP_URL, candidate_short_names=["play", "app"], prefer_direct_url=False)
+        if cherry_tok:
+            tokens["cherry_init_data"] = cherry_tok
+            tokens["cherry"] = cherry_tok
+            tokens["cherryplay_init_data"] = cherry_tok
+            print(f"  🍒 Cherry Play: Collected")
         await asyncio.sleep(0.5)
 
-        # 12. TAVORA Node (@TavoraNode_Bot)
-        tav_p = None if is_master else TAVORA_REF
-        tav_tok = await extract_bot_webapp_token(cl, TAVORA_BOT, start_param=tav_p, default_url="https://tavoranode.vip/", candidate_short_names=["myapp", "app"], prefer_direct_url=True)
-        if tav_tok:
-            tokens["tavora_init_data"] = tav_tok
-            tokens["tavora_uid"] = "MW0MB8RV" if is_master else acc_uid
-            try:
-                login_payload = json.dumps({"initData": tav_tok, "referrer_code": "ref_MW0MB8RV", "turnstileToken": ""}).encode()
-                h_tl = {"Content-Type": "application/json", "Origin": "https://tavoranode.vip", "Referer": "https://tavoranode.vip/", "User-Agent": "Mozilla/5.0"}
-                async with session.post("https://tavoranode.vip/api/user/login/tg", data=login_payload, headers=h_tl, timeout=aiohttp.ClientTimeout(total=8)) as t_resp:
-                    if t_resp.status == 200:
-                        t_data = await t_resp.json()
-                        if t_data.get("auth_info"):
-                            tokens["tavora_token"] = t_data["auth_info"]
-                            u_inf = t_data.get("user_info", {})
-                            tokens["tavora_uid"] = u_inf.get("uid") or tokens["tavora_uid"]
-            except Exception:
-                pass
-            print(f"  ⚡ TAVORA Node: Collected")
-        await asyncio.sleep(0.5)
-
-        # 13. Victor's Company (@Victors_Company_bot)
+        # 12. Victor's Company (@Victors_Company_bot)
         vic_p = None if is_master else VICTORS_REF
         vic_tok = await extract_bot_webapp_token(cl, VICTORS_BOT, start_param=vic_p, default_url="https://app.victors.company/", candidate_short_names=["app"], prefer_direct_url=False)
         if not vic_tok:
