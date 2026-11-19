@@ -273,33 +273,6 @@ def solve_atf_math(question_text: str) -> str:
 
 solve_challenge_deterministic = solve_atf_math
 
-def encrypt_tavora_auth(data_obj):
-    """Encrypts payload using Tavora's exact AES-128-CBC keys via OpenSSL or Node."""
-    data_str = json.dumps(data_obj) if not isinstance(data_obj, str) else data_obj
-    key_hex = "J8gD4uKpT2rV9ZbQ".encode().hex()
-    iv_hex = "L1hW7gFqP3kM0VbY".encode().hex()
-    try:
-        p = subprocess.Popen(
-            ["openssl", "enc", "-aes-128-cbc", "-K", key_hex, "-iv", iv_hex, "-base64", "-A"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        out, err = p.communicate(input=data_str.encode())
-        if p.returncode == 0:
-            return out.decode().strip()
-    except Exception:
-        pass
-
-    # Node fallback
-    script = f"""
-    const crypto = require('crypto');
-    const cipher = crypto.createCipheriv('aes-128-cbc', Buffer.from('J8gD4uKpT2rV9ZbQ'), Buffer.from('L1hW7gFqP3kM0VbY'));
-    let enc = cipher.update({repr(data_str)}, 'utf8', 'base64');
-    enc += cipher.final('base64');
-    process.stdout.write(enc);
-    """
-    res = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
-    return res.stdout.strip()
-
 async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
     is_owner = (str(uid) == MASTER_UID)
     is_master = is_owner
@@ -761,95 +734,34 @@ async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
         else:
             report["bots"]["9. Lifetime Energy"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
 
-        # 10. JVault Miner
-        jv_init = tokens.get("jvault_init_data")
-        if jv_init:
+        # 14. Cherry Play
+        cherry_init = tokens.get("cherry_init_data") or tokens.get("cherry")
+        if cherry_init:
             b_rep = {"core": {}, "side_tasks": []}
             try:
-                jv_h = {
+                ch_h = {
                     **headers,
                     "Content-Type": "application/json",
-                    "Authorization": f"tma {jv_init}",
-                    "x-telegram-init-data": jv_init
+                    "Authorization": f"tma {cherry_init}",
+                    "X-Device": (tokens.get("cherry_device_id") or f"d_{uid}_{int(time.time()*1000)}").ljust(36, "0")[:36],
+                    "Origin": "https://cherryearn.site",
+                    "Referer": "https://cherryearn.site/"
                 }
-                body_sync = {
-                    "telegramId": str(uid),
-                    "username": acc_info.get("username", name),
-                    "firstName": acc_info.get("first_name", name),
-                    "lastName": acc_info.get("last_name", ""),
-                    "referralCode": "6727787768",
-                    "initData": jv_init
-                }
-                async with session.post("https://jvaultminer.world/api/user/sync", json=body_sync, headers=jv_h, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                async with session.post("https://api.cherryearn.site/api/bootstrap", json={}, headers=ch_h, timeout=aiohttp.ClientTimeout(total=8)) as r:
                     if r.status == 200:
-                        d_sync = await r.json()
-                        u = d_sync.get("user", {})
-                        bal = float(u.get("holdingBalance", 0) or u.get("totalAssets", 0) or 0)
-                        lvl = u.get("level", 1)
-                        b_rep["core"] = {"status": f"Active: {bal:.2f} JVT (Level {lvl})", "balance": bal, "level": lvl}
-                        b_rep["side_tasks"].append(f"Level {lvl} • Balance {bal:.2f} JVT")
+                        b_data = await r.json()
+                        bal = float(b_data.get("user", {}).get("balance", 0) or 0)
+                        streak = b_data.get("streak", {}).get("current", 0)
+                        spins = b_data.get("spins", {}).get("available", 0)
+                        b_rep["core"] = {"status": f"Active: {bal:.0f} Cherries (Streak {streak})", "balance": bal, "streak": streak}
+                        b_rep["side_tasks"].append(f"Streak {streak} • Spins {spins}")
                     else:
                         b_rep["core"] = {"status": f"HTTP {r.status}"}
             except Exception as e:
                 b_rep["error"] = str(e)
-            report["bots"]["10. JVault Miner"] = b_rep
+            report["bots"]["14. Cherry Play"] = b_rep
         else:
-            report["bots"]["10. JVault Miner"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
-
-        # 11. TAVORA Node
-        tav_init = tokens.get("tavora_init_data")
-        tav_token = tokens.get("tavora_token")
-        tav_uid = tokens.get("tavora_uid") or ("MW0MB8RV" if is_master else str(uid))
-        if tav_init or tav_token:
-            b_rep = {"core": {}, "side_tasks": []}
-            try:
-                if not tav_token and tav_init:
-                    h_l = {
-                        **headers,
-                        "Content-Type": "application/json",
-                        "Origin": "https://tavoranode.vip",
-                        "Referer": "https://tavoranode.vip/"
-                    }
-                    b_l = {"initData": tav_init, "referrer_code": "ref_MW0MB8RV", "turnstileToken": ""}
-                    async with session.post("https://tavoranode.vip/api/user/login/tg", json=b_l, headers=h_l, timeout=aiohttp.ClientTimeout(total=8)) as lr:
-                        if lr.status == 200:
-                            ld = await lr.json()
-                            tav_token = ld.get("auth_info")
-                            u_info = ld.get("user_info", {})
-                            tav_uid = u_info.get("uid") or tav_uid
-                if tav_token:
-                    now_ms = int(time.time() * 1000)
-                    auth_h = encrypt_tavora_auth({
-                        "uid": tav_uid,
-                        "token": tav_token,
-                        "time": now_ms,
-                        "device_id": "",
-                        "referrer_code": "ref_MW0MB8RV"
-                    })
-                    tav_h = {
-                        **headers,
-                        "Content-Type": "application/json",
-                        "authorization": auth_h,
-                        "time": str(now_ms),
-                        "lang": "en"
-                    }
-                    async with session.get("https://tavoranode.vip/api/user/user/user/info", headers=tav_h, timeout=aiohttp.ClientTimeout(total=8)) as ir:
-                        if ir.status == 200:
-                            id_data = await ir.json()
-                            t_info = id_data.get("user_info", {})
-                            tvr_bal = float(t_info.get("total_tokens", 0) or 0)
-                            t_lvl = t_info.get("level", 1)
-                            b_rep["core"] = {"status": f"Active: {tvr_bal:.2f} TVR (Level {t_lvl})", "balance": tvr_bal, "level": t_lvl}
-                            b_rep["side_tasks"].append(f"Level {t_lvl} • {tvr_bal:.2f} TVR")
-                        else:
-                            b_rep["core"] = {"status": f"HTTP {ir.status}"}
-                else:
-                    b_rep["core"] = {"status": "Login Failed"}
-            except Exception as e:
-                b_rep["error"] = str(e)
-            report["bots"]["11. TAVORA Node"] = b_rep
-        else:
-            report["bots"]["11. TAVORA Node"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
+            report["bots"]["14. Cherry Play"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
 
         # 12. Victor's Company
         vic_init = tokens.get("victors_init_data")
@@ -1085,8 +997,7 @@ async def main():
         "myage_gram": 0.0,
         "lifetime_watts": 0,
         "lifetime_energy": 0.0,
-        "jvault": 0.0,
-        "tavora": 0.0,
+        "cherry": 0.0,
         "victors": 0.0,
         "azm": 0.0,
         "dillo": 0.0
@@ -1138,12 +1049,9 @@ async def main():
         le_core = bots.get("9. Lifetime Energy", {}).get("core", {})
         totals["lifetime_watts"] += int(le_core.get("power", 0) or 0)
         totals["lifetime_energy"] += float(le_core.get("hashes", 0.0) or 0.0)
-        # 10. JVault Miner
-        jv_core = bots.get("10. JVault Miner", {}).get("core", {})
-        totals["jvault"] += float(jv_core.get("balance", 0.0) or 0.0)
-        # 11. TAVORA Node
-        tav_core = bots.get("11. TAVORA Node", {}).get("core", {})
-        totals["tavora"] += float(tav_core.get("balance", 0.0) or 0.0)
+        # 14. Cherry Play
+        cherry_core = bots.get("14. Cherry Play", {}).get("core", {})
+        totals["cherry"] += float(cherry_core.get("balance", 0.0) or 0.0)
         # 12. Victor's Company
         vic_core = bots.get("12. Victor's Company", {}).get("core", {})
         totals["victors"] += float(vic_core.get("balance", 0.0) or 0.0)
@@ -1169,8 +1077,7 @@ async def main():
     print(f"  • ⚡ MexoEarn:        {totals.get('mexo', 0):,} MXO")
     print(f"  • 🎂 MyAgeApp:        {totals.get('myage', 0):,} AGE ({totals.get('myage_gram', 0.0):.2f} GRAM)")
     print(f"  • 🔋 Lifetime Energy: {totals['lifetime_watts']:,} WATTS • {totals['lifetime_energy']:.4f} ENERGY")
-    print(f"  • 💎 JVault Miner:    {totals['jvault']:,.2f} JVT")
-    print(f"  • ⚡ TAVORA Node:     {totals['tavora']:,.2f} TVR")
+    print(f"  • 🍒 Cherry Play:     {totals['cherry']:,.0f} Cherries")
     print(f"  • 🏢 Victor's Co:     {totals['victors']:,.0f} VIC Coins")
     print(f"  • 💎 AZM Miner:       {totals.get('azm', 0.0):,.2f} AZM")
     print(f"  • ⛏️ Dillo Miner:     {totals.get('dillo', 0.0):,.2f} DILLO")
@@ -1198,7 +1105,7 @@ async def main():
             f"  ⚡ <code>{totals.get('mexo', 0):,} MXO</code>\n"
             f"  🎂 <code>{totals.get('myage', 0):,} AGE ({totals.get('myage_gram', 0.0):.2f} GRAM)</code>\n"
             f"  ⚡ <code>{totals['lifetime_watts']:,} WATTS ({totals['lifetime_energy']:.4f} ENERGY)</code>\n"
-            f"  💎 <code>{totals['jvault']:,.2f} JVT</code> • ⚡ <code>{totals['tavora']:,.2f} TVR</code>\n"
+            f"  🍒 <code>{totals['cherry']:,.0f} Cherries</code>\n"
             f"  🏢 <code>{totals['victors']:,.0f} VIC Coins</code> • 💎 <code>{totals.get('azm', 0.0):,.2f} AZM</code>\n"
             f"  ⛏️ <code>{totals.get('dillo', 0.0):,.2f} DILLO</code> • 🎯 <code>{totals.get('hunter', 0.0):,.4f} GRAM</code>\n"
             f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
