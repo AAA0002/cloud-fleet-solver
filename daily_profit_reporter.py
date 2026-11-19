@@ -7,7 +7,7 @@ Calculates:
 - Total BNB farmed & withdrawn today
 - Real-time fiat valuation (USD $ and BDT ৳) via Binance API
 - Live On-Chain Wallet Balance from Binance Smart Chain
-- Cloudflare Edge Mini-App Yield (14 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, JVault Miner, TAVORA Node, Victor's Company, AZM Miner, Dillo Miner)
+- Cloudflare Edge Mini-App Yield (15 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, JVault Miner, TAVORA Node, Victor's Company, AZM Miner, Dillo Miner, Hunter Miner)
 Broadcasts report to Telegram Payout Channel (-1004402765950) & Admin DM (6727787768).
 """
 
@@ -598,7 +598,7 @@ async def generate_and_send_report(dry_run: bool = False):
         if admin_notif_channel:
             short_ledger = (
                 f"📊 <b>Daily Fleet Financial Ledger</b>\n"
-                f"• <b>Fleet Scale:</b> <code>{total_accounts} Accounts • 14/14 Bots</code>\n"
+                f"• <b>Fleet Scale:</b> <code>{total_accounts} Accounts • 15/15 Bots</code>\n"
                 f"• <b>Treasury Vault:</b> <code>{wallet_bnb:.6f} BNB</code> (${wallet_usd:.2f}) • <code>{wallet_ton:.4f} TON</code> (${wallet_ton_usd:.2f})\n"
                 f"• <b>Combined Vault:</b> ~${wallet_usd + wallet_ton_usd:.2f} USD (~৳{wallet_bdt + wallet_ton_bdt:.0f} BDT)\n"
                 f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
