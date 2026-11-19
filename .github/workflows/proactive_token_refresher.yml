@@ -1,14 +1,14 @@
-name: "Proactive 12-Hour Cloud Token Refresher"
+name: "Proactive 4-Hour Cloud Token Refresher"
 
 on:
   workflow_dispatch:
   schedule:
-    # Run every 12 hours (at 02:00 and 14:00 UTC)
-    - cron: "0 2,14 * * *"
+    # Run every 4 hours so tokens never age past 4 hours
+    - cron: "0 */4 * * *"
 
 jobs:
   dispatch_cloud_token_refresh:
-    name: "Trigger MTProto Session Refresh on Render Node 3"
+    name: "Execute Autonomous MTProto Token Refresh on GitHub Actions Public Runner"
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -38,13 +38,18 @@ jobs:
           UPSTASH_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
           TURSO_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
           TURSO_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
+          TURSO_DB_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_DB_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
+          SUPABASE_URL: "${{ secrets.SUPABASE_URL || 'https://znbbaozpevurvbfkxakz.supabase.co' }}"
+          SUPABASE_SERVICE_KEY: "${{ secrets.SUPABASE_SERVICE_KEY || secrets.SUPABASE_ANON_KEY }}"
+          SUPABASE_ANON_KEY: "${{ secrets.SUPABASE_ANON_KEY }}"
           REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
           CF_SECRET_KEY: "${{ secrets.CF_SECRET_KEY || secrets.SECRET_KEY }}"
           SECRET_KEY: "${{ secrets.SECRET_KEY }}"
         run: |
-          python3 refresh_cloud_tokens.py || python3 scripts/maintenance/trigger_cloud_token_refresh.py
+          python3 refresh_cloud_tokens.py
 
       - name: Verify Token Freshness across 23 Accounts
         env:
@@ -56,7 +61,7 @@ jobs:
           ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
         run: |
-          python3 scripts/maintenance/token_expiration_watchdog.py --no-notify --check-only
+          python3 scripts/maintenance/token_expiration_watchdog.py --check-only
 
       - name: Verify Zero-Secret Hygiene
         run: |
