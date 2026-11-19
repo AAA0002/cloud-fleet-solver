@@ -125,39 +125,35 @@ def main():
         print("❌ Error: SECRET_KEY environment variable or --secret argument required.")
         sys.exit(1)
 
-    # 1. Health check
-    print("📡 [1/2] Verifying Render Oregon Node 3 connectivity...")
-    healthy = verify_render_node(args.node_url)
-    if not healthy:
-        print("⚠️ Render node reported unhealthy or unreachable (e.g. suspended by bandwidth quota).")
-        print("🚀 [FAILOVER] Automatically dispatching GitHub Actions cloud token refresher...")
-        try:
-            import subprocess
+    # 1. Primary: Dispatch directly to GitHub Actions public runner (unlimited free compute, 0 minutes limit)
+    print("🚀 [1/2] Dispatching to Public GitHub Actions Runner (AAA0002/cloud-fleet-ops)...")
+    try:
+        import subprocess
+        cmd = ["gh", "workflow", "run", "proactive_token_refresher.yml", "--repo", "AAA0002/cloud-fleet-ops"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if proc.returncode != 0:
             cmd = ["gh", "workflow", "run", "proactive_token_refresher.yml", "--repo", "AAA0002/cloud-fleet-solver"]
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            if proc.returncode == 0:
-                print("✅ Successfully dispatched GitHub Actions token refresher (unlimited free compute).")
+        if proc.returncode == 0:
+            print("✅ Successfully dispatched GitHub Actions token refresher (unlimited free compute).")
+            if not args.no_notify:
                 send_admin_notification(
-                    "🔄 <b>AAA AUTO — Cloud Token Refresher Failover</b>\n"
+                    "🔄 <b>AAA AUTO — Cloud Token Refresher</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    "• <b>Trigger:</b> Render Standby Node Offline (Bandwidth Quota)\n"
-                    "• <b>Failover Engine:</b> GitHub Actions Cloud Runner\n"
+                    "• <b>Engine:</b> GitHub Actions Public Cloud Runner (cloud-fleet-ops)\n"
                     "• <b>Workflow:</b> <code>proactive_token_refresher.yml</code>\n"
                     "• <b>Status:</b> 🟢 Dispatched & Running (23 Accounts)\n"
-                    "• <b>Execution:</b> 100% Cloud (0% Phone Load)\n"
+                    "• <b>Execution:</b> 100% Free Public Runner (0% Quota)\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 )
-                sys.exit(0)
-            else:
-                print(f"⚠️ GitHub Actions failover dispatch returned code {proc.returncode}: {proc.stderr}")
-        except Exception as fe:
-            print(f"⚠️ Failover dispatch note: {fe}")
-        print("❌ All refresh backends exhausted. Aborting refresh.")
-        sys.exit(1)
-    print("  ✅ Render node is ONLINE and HEALTHY.")
+            sys.exit(0)
+        else:
+            print(f"⚠️ GitHub Actions dispatch returned code {proc.returncode}: {proc.stderr}")
+    except Exception as fe:
+        print(f"⚠️ GitHub Actions dispatch note: {fe}")
 
-    # 2. Trigger token harvesting
-    print("🚀 [2/2] Triggering batch MTProto token harvesting (/collect-tokens)...")
+    # 2. Secondary Failover: Direct Node token collection
+    print("📡 [2/2] Attempting direct node fallback (/collect-tokens)...")
     res = trigger_token_collection(args.node_url, args.secret)
     if not res.get("ok"):
         print(f"❌ Token collection trigger failed: {res.get('error')}")
