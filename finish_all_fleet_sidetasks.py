@@ -16,8 +16,7 @@ all dynamic accounts in the fleet for all 14 legitimate bots:
   7. MexoEarn (@MexoEarni_bot)
   8. MyAgeApp (@MyAgeApp)
   9. Lifetime Energy (@lifetime_energy_bot)
-  10. JVault Miner (@JVaultMinerBot)
-  11. TAVORA Node (@TavoraNode_Bot)
+  10. Cherry Play (@CherryPlayBot)
   12. Victor's Company (@Victors_Company_bot)
   13. AZM Miner (@AZMIR_Miner_BOT)
   14. Dillo Miner (@dillo_miner_bot)
@@ -2065,235 +2064,21 @@ async def sweep_lifetime_tasks(session: aiohttp.ClientSession, uid: str, name: s
     return res
 
 
-async def sweep_jvault_tasks(session: aiohttp.ClientSession, uid: str, name: str, init_data: str, acc: dict) -> Dict[str, Any]:
-    """Sweeps JVault Miner claims, tap-mining, dynamic tasks, and rewarded ads."""
-    res = {"bot": "JVault Miner", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0}
+async def sweep_cherry_tasks(session: aiohttp.ClientSession, uid: str, name: str, init_data: str, acc: dict) -> Dict[str, Any]:
+    """Sweeps Cherry Play bootstrap, daily streak, lucky spins, referral commission, and tasks."""
+    res = {"bot": "Cherry Play", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0, "streak": 0}
     if not init_data:
         res["notes"].append("no_init_data")
         return res
     try:
-        h = {
-            "User-Agent": acc.get("user_agent") or "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36",
-            "Content-Type": "application/json",
-            "Authorization": f"tma {init_data}",
-            "x-telegram-init-data": init_data,
-            "Origin": "https://jvaultminer.world",
-            "Referer": "https://jvaultminer.world/"
-        }
-        jv_uid = acc.get("jvault_user_id") or f"usr_{uid}"
-        sync_b = {
-            "telegramId": uid, "username": acc.get("username", name),
-            "firstName": acc.get("first_name", name), "lastName": acc.get("last_name", ""),
-            "referralCode": "6727787768", "initData": init_data
-        }
-        async with session.post("https://jvaultminer.world/api/user/sync", json=sync_b, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as sr:
-            if sr.status == 200:
-                sd = await sr.json()
-                u = sd.get("user", {})
-                jv_uid = u.get("id", jv_uid)
-                res["balance"] = float(u.get("holdingBalance", 0) or u.get("totalAssets", 0) or 0)
-                sess = sr.headers.get("x-app-session")
-                if sess:
-                    h["x-app-session"] = sess
-            else:
-                err_t = await sr.text()
-                if "সিগনেচার" in err_t or "BOT_TOKEN" in err_t:
-                    res["notes"].append("server_signature_mismatch")
-
-        # Connect & verify dedicated TON wallet
-        ton_addr = get_ton_wallet_address(acc, uid)
-        if ton_addr:
-            try:
-                async with session.post(
-                    "https://jvaultminer.world/api/user/connect-wallet",
-                    json={"address": ton_addr, "walletType": "tonconnect"},
-                    headers=h,
-                    timeout=aiohttp.ClientTimeout(total=5)
-                ) as wr:
-                    if wr.status == 200:
-                        wd = await wr.json()
-                        if wd.get("success"):
-                            res["notes"].append("ton_wallet_verified")
-            except Exception:
-                pass
-
-        for ep in ["tap-mine", "claim"]:
-            try:
-                async with session.post(f"https://jvaultminer.world/api/user/{ep}", json={"userId": jv_uid, "initData": init_data}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as mr:
-                    if mr.status == 200:
-                        res["tasks_claimed"] += 1
-            except Exception:
-                pass
-
-        # Rewarded ad watch
-        try:
-            for _ in range(2):
-                async with session.post("https://jvaultminer.world/api/user/watch-ad", json={"userId": jv_uid, "clicked": 1, "initData": init_data}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
-                    if ar.status == 200:
-                        ad_d = await ar.json()
-                        if ad_d.get("success"):
-                            res["tasks_claimed"] += 1
-                            res["notes"].append("watch_ad")
-                            await asyncio.sleep(0.5)
-                        else:
-                            break
-                    else:
-                        break
-        except Exception:
-            pass
-        try:
-            async with session.get(f"https://jvaultminer.world/api/tasks?userId={jv_uid}", headers=h, timeout=aiohttp.ClientTimeout(total=6)) as tr:
-                if tr.status == 200:
-                    td = await tr.json()
-                    completed = set(td.get("completedTaskIds", []))
-                    for t in td.get("tasks", []):
-                        tid = t.get("id")
-                        if tid and tid not in completed:
-                            # Ephemeral channel task: Auto-join telegram channel if required, claim, then immediately leave and delete dialog
-                            ch_target = t.get("telegramChatId") or t.get("link", "")
-                            t_cl = None
-                            ent_to_leave = None
-                            if ch_target and acc.get("session_string") and ("t.me" in str(ch_target) or str(ch_target).startswith("@")):
-                                try:
-                                    ch_clean = str(ch_target).replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").split("/")[0].split("?")[0]
-                                    if ch_clean:
-                                        from telethon import TelegramClient
-                                        from telethon.sessions import StringSession
-                                        from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
-                                        t_api_id = int(os.getenv("API_ID") or os.getenv("TELEGRAM_API_ID") or 2040)
-                                        t_api_hash = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or "5cd9e5bbfb572a4429a0c54774153b47"
-                                        t_cl = TelegramClient(StringSession(acc["session_string"]), t_api_id, t_api_hash)
-                                        await t_cl.connect()
-                                        if await t_cl.is_user_authorized():
-                                            ent_to_leave = await t_cl.get_entity(ch_clean)
-                                            await t_cl(JoinChannelRequest(ent_to_leave))
-                                except Exception:
-                                    pass
-                            try:
-                                async with session.post(f"https://jvaultminer.world/api/tasks/claim/{tid}", json={"userId": jv_uid}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as tcr:
-                                    if tcr.status == 200:
-                                        res["tasks_claimed"] += 1
-                                        res["notes"].append(f"task_{t.get('title', tid)[:15]}")
-                            finally:
-                                # Strict Ephemeral Cleanup: Leave channel and purge dialog immediately
-                                if t_cl and ent_to_leave:
-                                    try:
-                                        await t_cl(LeaveChannelRequest(ent_to_leave))
-                                        await t_cl.delete_dialog(ent_to_leave)
-                                    except Exception:
-                                        pass
-                                    try:
-                                        await t_cl.disconnect()
-                                    except Exception:
-                                        pass
-        except Exception:
-            pass
-        if uid == MASTER_UID:
-            for ep in ["claim-invite-bonus", "claim-team-commission"]:
-                try:
-                    async with session.post(f"https://jvaultminer.world/api/user/{ep}", json={"userId": jv_uid}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as mcr:
-                        if mcr.status == 200:
-                            res["tasks_claimed"] += 1
-                except Exception:
-                    pass
-        res["success"] = True
-    except Exception as e:
-        res["notes"].append(f"err: {str(e)[:40]}")
-    return res
-
-
-async def sweep_tavora_tasks(session: aiohttp.ClientSession, uid: str, name: str, tav_token_or_init: str, acc: dict) -> Dict[str, Any]:
-    """Sweeps TAVORA Node lottery spins and daily check-ins."""
-    res = {"bot": "TAVORA Node", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0, "level": 1}
-    tav_init = acc.get("tavora_init_data")
-    tav_token = acc.get("tavora_token")
-    if not (tav_init or tav_token):
-        res["notes"].append("no_init_data")
-        return res
-    try:
-        tav_uid = acc.get("tavora_uid") or ("MW0MB8RV" if uid == MASTER_UID else uid)
-        h_login = {
-            "User-Agent": acc.get("user_agent") or "Mozilla/5.0 (Linux; Android 10; SM-G981B)",
-            "Content-Type": "application/json",
-            "Origin": "https://tavoranode.vip", "Referer": "https://tavoranode.vip/"
-        }
-        if not tav_token and tav_init:
-            async with session.post("https://tavoranode.vip/api/user/login/tg", json={"initData": tav_init, "referrer_code": "ref_MW0MB8RV", "turnstileToken": ""}, headers=h_login, timeout=aiohttp.ClientTimeout(total=8)) as lr:
-                if lr.status == 200:
-                    ld = await lr.json()
-                    tav_token = ld.get("auth_info")
-                    u_inf = ld.get("user_info", {})
-                    tav_uid = u_inf.get("uid") or tav_uid
-        if not tav_token:
-            res["notes"].append("auth_failed")
-            return res
-
-        now_ms = int(time.time() * 1000)
-        data_str = json.dumps({"uid": tav_uid, "token": tav_token, "time": now_ms, "device_id": "", "referrer_code": "ref_MW0MB8RV"})
-        key_hex = "J8gD4uKpT2rV9ZbQ".encode().hex()
-        iv_hex = "L1hW7gFqP3kM0VbY".encode().hex()
-        import subprocess
-        def _encrypt_header():
-            p = subprocess.Popen(["openssl", "enc", "-aes-128-cbc", "-K", key_hex, "-iv", iv_hex, "-base64", "-A"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            out, _ = p.communicate(input=data_str.encode())
-            return out.decode().strip() if p.returncode == 0 else ""
-        auth_h = await asyncio.to_thread(_encrypt_header)
-
-        tav_h = {
-            "User-Agent": acc.get("user_agent") or "Mozilla/5.0 (Linux; Android 10; SM-G981B)",
-            "Content-Type": "application/json",
-            "authorization": auth_h,
-            "time": str(now_ms),
-            "lang": "en"
-        }
-        # 1. User Info (Balance & Level)
-        try:
-            async with session.get("https://tavoranode.vip/api/user/user/user/info", headers=tav_h, timeout=aiohttp.ClientTimeout(total=6)) as ur:
-                if ur.status == 200:
-                    ud = await ur.json()
-                    ui = ud.get("user_info", {})
-                    res["balance"] = float(ui.get("balance", 0) or ui.get("amount", 0) or 0)
-                    res["level"] = int(ui.get("user_level", 1) or 1)
-        except Exception:
-            pass
-
-        # 2. Daily Sign In
-        try:
-            async with session.post("https://tavoranode.vip/api/user/user/sign-in/create", json={}, headers=tav_h, timeout=aiohttp.ClientTimeout(total=6)) as sr:
-                if sr.status == 200:
-                    sd = await sr.json()
-                    if sd.get("prize"):
-                        res["tasks_claimed"] += 1
-                        res["notes"].append(f"sign_in_+{sd.get('prize', {}).get('number', 1)}TVR")
-                    elif "Signed in today" in str(sd.get("error", "")):
-                        res["notes"].append("signed_in_today")
-        except Exception:
-            pass
-
-        # 3. Lottery Draw
-        try:
-            async with session.get("https://tavoranode.vip/api/user/user/user-lottery/info", headers=tav_h, timeout=aiohttp.ClientTimeout(total=6)) as lir:
-                if lir.status == 200:
-                    ld = await lir.json()
-                    inf = ld.get("info", {})
-                    avail_spins = int(inf.get("lottery_times", 0) or 0)
-                    for _ in range(min(avail_spins, 5)):
-                        async with session.post("https://tavoranode.vip/api/user/user/user-lottery/create", json={}, headers=tav_h, timeout=aiohttp.ClientTimeout(total=6)) as cr:
-                            if cr.status == 200:
-                                cd = await cr.json()
-                                if not cd.get("error"):
-                                    res["tasks_claimed"] += 1
-                                    rew_num = cd.get("number", 0)
-                                    rew_type = cd.get("type", "TVR")
-                                    res["notes"].append(f"lottery_+{rew_num}{rew_type}")
-                                    await asyncio.sleep(1.0)
-                                else:
-                                    break
-                            else:
-                                break
-        except Exception:
-            pass
-        res["success"] = True
+        from cherry_miner import CherryClient
+        client = CherryClient(init_data=init_data, user_id=uid)
+        cycle_res = await client.run_full_farming_cycle()
+        res["success"] = cycle_res.get("success", False)
+        res["balance"] = cycle_res.get("balance", 0.0)
+        res["streak"] = cycle_res.get("streak", 0)
+        res["tasks_claimed"] = cycle_res.get("tasks_harvested", 0)
+        res["notes"].append(f"{res['balance']:.0f} Cherries, streak {res['streak']}")
     except Exception as e:
         res["notes"].append(f"err: {str(e)[:40]}")
     return res
@@ -2885,17 +2670,11 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         account_report["results"]["lifetime"] = le_res
         logger.info(f"[{name}] (9/15) 🔋 Lifetime Energy: {le_res.get('tasks_claimed', 0)} claimed ({', '.join(le_res.get('notes', [])[:2]) or 'ok'})")
 
-        # 10. JVault Miner
-        jv_init = merged_toks.get("jvault_init_data", "")
-        jv_res = await sweep_jvault_tasks(session, uid, name, jv_init, merged_toks)
-        account_report["results"]["jvault"] = jv_res
-        logger.info(f"[{name}] (10/15) 💎 JVault Miner: {jv_res.get('tasks_claimed', 0)} claimed ({', '.join(jv_res.get('notes', [])[:2]) or 'ok'})")
-
-        # 11. TAVORA Node
-        tav_tok = merged_toks.get("tavora_token") or merged_toks.get("tavora_init_data", "")
-        tav_res = await sweep_tavora_tasks(session, uid, name, tav_tok, merged_toks)
-        account_report["results"]["tavora"] = tav_res
-        logger.info(f"[{name}] (11/15) ⚡ TAVORA Node: {tav_res.get('tasks_claimed', 0)} claimed ({', '.join(tav_res.get('notes', [])[:2]) or 'ok'})")
+        # 10. Cherry Play
+        cherry_init = merged_toks.get("cherry_init_data") or merged_toks.get("cherry", "")
+        cherry_res = await sweep_cherry_tasks(session, uid, name, cherry_init, merged_toks)
+        account_report["results"]["cherry"] = cherry_res
+        logger.info(f"[{name}] (10/14) 🍒 Cherry Play: {cherry_res.get('tasks_claimed', 0)} claimed ({', '.join(cherry_res.get('notes', [])[:2]) or 'ok'})")
 
         # 12. Victor's Company
         vic_init = merged_toks.get("victors_init_data") or merged_toks.get("victors_company_init_data", "")
@@ -2991,8 +2770,7 @@ async def main():
             mxo_cl = res.get("mexoearn", {}).get("tasks_claimed", 0)
             age_cl = res.get("myage", {}).get("tasks_claimed", 0)
             life_cl = res.get("lifetime", {}).get("tasks_claimed", 0)
-            jv_cl = res.get("jvault", {}).get("tasks_claimed", 0)
-            tav_cl = res.get("tavora", {}).get("tasks_claimed", 0)
+            cherry_cl = res.get("cherry", {}).get("tasks_claimed", 0)
             vic_cl = res.get("victors", {}).get("tasks_claimed", 0)
             azm_cl = res.get("azm", {}).get("tasks_claimed", 0)
             dillo_cl = res.get("dillo", {}).get("tasks_claimed", 0)
@@ -3017,8 +2795,7 @@ async def main():
         mxo_tot = sum(r["results"].get("mexoearn", {}).get("tasks_claimed", 0) for r in reports)
         age_tot = sum(r["results"].get("myage", {}).get("tasks_claimed", 0) for r in reports)
         life_tot = sum(r["results"].get("lifetime", {}).get("tasks_claimed", 0) for r in reports)
-        jv_tot = sum(r["results"].get("jvault", {}).get("tasks_claimed", 0) for r in reports)
-        tav_tot = sum(r["results"].get("tavora", {}).get("tasks_claimed", 0) for r in reports)
+        cherry_tot = sum(r["results"].get("cherry", {}).get("tasks_claimed", 0) for r in reports)
         vic_tot = sum(r["results"].get("victors", {}).get("tasks_claimed", 0) for r in reports)
         azm_tot = sum(r["results"].get("azm", {}).get("tasks_claimed", 0) for r in reports)
         dillo_tot = sum(r["results"].get("dillo", {}).get("tasks_claimed", 0) for r in reports)
