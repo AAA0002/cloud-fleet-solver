@@ -327,8 +327,15 @@ async def clean_account_telegram_dialogs(acc: Dict[str, Any], dry_run: bool = Fa
         from telethon.tl.functions.channels import LeaveChannelRequest
         from telethon.tl.functions.messages import DeleteHistoryRequest
 
-        client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
-        await client.connect()
+        sess_obj = StringSession(session_str)
+        if sess_obj.dc_id and sess_obj.server_address:
+            sess_obj.set_dc(sess_obj.dc_id, sess_obj.server_address, 80)
+        client = TelegramClient(sess_obj, API_ID, API_HASH, timeout=10)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=8.0)
+        except Exception as conn_err:
+            print(f"  ℹ️ [{name}] MTProto connection unavailable in current environment ({conn_err}). Skipping dialog clean.")
+            return res
         if not await client.is_user_authorized():
             await client.disconnect()
             return res
