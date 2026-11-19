@@ -1073,6 +1073,18 @@ async def snipe_promo_fleet(
                     "hens_bought": hens_bought,
                     "latency_seconds": round(duration, 3)
                 })
+                try:
+                    from ably_logger import publish_ably_event
+                    publish_ably_event("promo_sniped", {
+                        "code": code,
+                        "claimed_accounts": len(successful),
+                        "total_accounts": len(fleet),
+                        "coins_earned": total_coins,
+                        "hens_bought": hens_bought,
+                        "latency_seconds": round(duration, 3)
+                    })
+                except Exception:
+                    pass
             elif unauth_count >= max(5, int(len(fleet) * 0.6)):
                 alert_msg = (
                     f"⚠️ <b>CHICKEN LAND PROMO SNIPER ALERT</b> 🐔\n\n"
