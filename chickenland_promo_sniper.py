@@ -469,8 +469,33 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
-    # 1. Upstash Redis monolithic miniapp_tokens
-    if UPSTASH_URL and UPSTASH_TOKEN:
+    # 0.1 Check individual keys in Turso LibSQL for any accounts missing from miniapp_tokens
+    if len(fleet) < 23 and accounts_list:
+        for acc in accounts_list:
+            uid = str(acc.get("user_id") or acc.get("id") or "")
+            if not uid or uid == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
+                continue
+            if uid not in fleet or not fleet[uid].get("b64_token"):
+                try:
+                    res_ind = turso_get(f"fleet:tokens:{uid}")
+                    if res_ind:
+                        u_toks = json.loads(res_ind) if isinstance(res_ind, str) else res_ind
+                        if isinstance(u_toks, dict):
+                            tok = u_toks.get("chickenland_init_data") or u_toks.get("chicken_init_data")
+                            if tok:
+                                update_token(uid, tok)
+                except Exception:
+                    pass
+                if uid not in fleet or not fleet[uid].get("b64_token"):
+                    try:
+                        res_single = turso_get(f"fleet:tokens:{uid}:chickenland_init_data")
+                        if res_single and isinstance(res_single, str) and not res_single.startswith("{"):
+                            update_token(uid, res_single)
+                    except Exception:
+                        pass
+
+    # 1. Upstash Redis monolithic miniapp_tokens (Secondary cache)
+    if UPSTASH_URL and UPSTASH_TOKEN and len(fleet) < 23:
         try:
             res = redis_command("GET", "miniapp_tokens")
             if res:
@@ -485,16 +510,16 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                         tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
                         if tok:
                             update_token(uid, tok)
-        except Exception as e:
+        except Exception:
             pass
 
-    # 2. Check individual keys ONLY if miniapp_tokens was missing accounts (< 20)
-    if len(fleet) < 20 and accounts_list:
+    # 2. Check individual keys in Redis ONLY if still missing accounts
+    if len(fleet) < 23 and accounts_list:
         for acc in accounts_list:
             uid = str(acc.get("user_id", ""))
             if uid == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
                 continue
-            if uid and UPSTASH_URL and UPSTASH_TOKEN:
+            if uid and UPSTASH_URL and UPSTASH_TOKEN and uid not in fleet:
                 try:
                     res = redis_command("GET", f"fleet:tokens:{uid}")
                     if res:
@@ -769,41 +794,36 @@ async def trigger_emergency_token_refresh():
         return
     LAST_EMERGENCY_REFRESH_TIME = now_er
 
-    render_endpoints = [
-        "http://127.0.0.1:10000/collect-tokens?force=1",
-        "http://127.0.0.1:8000/collect-tokens?force=1"
-    ]
-    if os.getenv("RENDER_SERVICE_URL"):
-        render_endpoints.insert(0, os.getenv("RENDER_SERVICE_URL").rstrip("/") + "/collect-tokens?force=1")
+    render_endpoints = []
+    gh_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_PAT")
     try:
         secret = os.getenv("SECRET_KEY") or os.getenv("CF_SECRET_KEY") or "agy_cf_secret_7d36994e_2026"
         connector = aiohttp.TCPConnector(limit=5)
         async with aiohttp.ClientSession(connector=connector) as session:
             headers = {"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}
             triggered = False
-            for ep in render_endpoints:
+
+            # 1. Dispatch GitHub Actions Public Runner (Unlimited free minutes)
+            if gh_token:
                 try:
-                    url = ep if "secret=" in ep else f"{ep}&secret={secret}"
-                    async with session.post(
-                        url,
-                        json={"source": "emergency_promo_unauthorized"},
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=5)
-                    ) as r:
-                        if r.status in (200, 201):
-                            logger.info(f"[Sniper Emergency] Token collection triggered on {ep}")
+                    gh_url = "https://api.github.com/repos/AAA0002/cloud-fleet-solver/actions/workflows/proactive_token_refresher.yml/dispatches"
+                    gh_h = {"Authorization": f"token {gh_token}", "Accept": "application/vnd.github.v3+json", "User-Agent": "AAA-Fleet-Sniper"}
+                    async with session.post(gh_url, headers=gh_h, json={"ref": "main"}, timeout=aiohttp.ClientTimeout(total=5)) as r_gh:
+                        if r_gh.status in (200, 204):
+                            logger.info("[Sniper Emergency] Dispatched proactive_token_refresher.yml on GitHub Actions public runner.")
                             triggered = True
-                            break
-                except Exception:
-                    pass
-            if not triggered:
-                try:
-                    cf_url = "https://restore-agy.agorameet.workers.dev/api/tokens/refresh"
-                    async with session.post(cf_url, headers=headers, json={"source": "emergency_promo_unauthorized"}, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                        if r.status == 200:
-                            logger.info("[Sniper Emergency] Token collection triggered via Cloudflare Edge.")
-                except Exception:
-                    pass
+                except Exception as e_gh:
+                    logger.warning(f"[Sniper Emergency] GitHub Actions dispatch note: {e_gh}")
+
+            # 2. Trigger Cloudflare Edge Worker
+            try:
+                cf_url = "https://restore-agy.agorameet.workers.dev/api/tokens/refresh"
+                async with session.post(cf_url, headers=headers, json={"source": "emergency_promo_unauthorized"}, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status in (200, 201):
+                        logger.info("[Sniper Emergency] Token collection triggered via Cloudflare Edge.")
+                        triggered = True
+            except Exception:
+                pass
         # Immediate quick-reload + delayed reload after cloud batch completes (~45s)
         await asyncio.sleep(2)
         load_fleet_tokens(force_refresh=True)
@@ -1009,8 +1029,8 @@ async def snipe_promo_fleet(
                     f"🎟 <b>Code Detected:</b> <code>{code}</code>\n"
                     f"❌ <b>Error:</b> {unauth_count}/{len(fleet)} accounts failed with <b>401 Unauthorized (Expired Tokens)</b>\n"
                     f"⏱ <b>Burst Latency:</b> {total_time}s\n"
-                    f"🔄 <b>Autonomous Action:</b> Triggering emergency MTProto token refresh on Render Node 2...\n"
-                    f"🛡 <i>Cloud Node 2 Token Watchdog</i>"
+                    f"🔄 <b>Autonomous Action:</b> Triggering emergency token refresh via GitHub Actions Public Runner & Turso...\n"
+                    f"🛡 <i>Public Cloud Runner & Turso Engine</i>"
                 )
                 send_telegram_alert(alert_msg, code=code)
                 asyncio.create_task(trigger_emergency_token_refresh())
@@ -1021,7 +1041,7 @@ async def snipe_promo_fleet(
                     f"🎟 <b>Code:</b> <code>{code}</code>\n"
                     f"❌ <b>Status:</b> {status_desc}\n"
                     f"⏱ <b>Burst Reaction Latency:</b> {total_time}s\n"
-                    f"🛡 <i>Cloud Node 2 Sub-Second Sniper Engine</i>"
+                    f"🛡 <i>Edge Sub-Second Sniper Engine</i>"
                 )
                 send_telegram_alert(alert_msg, code=code)
 
@@ -1385,6 +1405,22 @@ async def start_http_poller(poll_interval: float = 1.5):
 # =====================================================================
 def is_sniper_already_running(threshold_seconds: float = 45.0) -> bool:
     """Checks if another cloud sniper runner is currently active (< 45s heartbeat)."""
+    # 0. Turso LibSQL Mesh SSOT
+    try:
+        t_hb = turso_get("fleet:chickenland_sniper:heartbeat")
+        if t_hb:
+            data = json.loads(t_hb) if isinstance(t_hb, str) else t_hb
+            if data.get("status") in ("HANDOFF", "TERMINATED", "STOPPED"):
+                return False
+            ts = float(data.get("timestamp", 0))
+            age = time.time() - ts
+            if age < threshold_seconds:
+                logger.info(f"[Sniper Supervisor] Active heartbeat found in Turso LibSQL (age: {age:.1f}s < {threshold_seconds}s).")
+                return True
+    except Exception:
+        pass
+
+    # 1. Upstash Redis fallback
     if UPSTASH_URL and UPSTASH_TOKEN:
         try:
             hb = redis_command("GET", "fleet:chickenland_sniper:heartbeat")
