@@ -11,7 +11,7 @@ fleet accounts into Master Vaults and dedicated non-custodial wallets:
 3. Lifetime Energy: Withdraw >= 1,000 Energy to Master TON Vault
 4. EarnVault: Auto-cashout >= $1.00 USD to Binance BEP-20 Master EVM Vault
 5. Victor's Company: Autonomous Rookie Digger shift claims & 10% crew commission sweep
-6. TAVORA Node: Autonomous node dividend & lottery yield claims
+6. Cherry Play: Referral yield claims, daily streak & wheel spin sweep
 7. MexoEarn: Autonomous daily check-in & Adsgram MXO yield sweep
 8. MyAgeApp: Hourly vault harvest, streak bonus & spin prizes
 
@@ -471,83 +471,20 @@ async def sweep_victors_company(session: aiohttp.ClientSession, uid: str, name: 
     return None
 
 
-async def sweep_tavora_node(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """TAVORA Node: Claim daily node dividend & lottery rewards."""
-    tvr_token = tokens.get("tavora_init_data")
-    if not tvr_token:
+async def sweep_cherry_play(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
+    """Cherry Play: Claim referral earnings, daily streak bonus, spin wheel, and bind TON wallet."""
+    cherry_init = tokens.get("cherry_init_data") or tokens.get("cherry") or tokens.get("cherryplay_init_data")
+    if not cherry_init:
         return None
 
     try:
-        headers = {
-            "Authorization": tvr_token,
-            "Content-Type": "application/json",
-            "User-Agent": BROWSER_HEADERS["User-Agent"]
-        }
-        claimed_tvr = 0.0
-        # Sign-in dividend
-        async with session.post("https://tavoranode.vip/api/user/user/sign-in/create", headers=headers, json={}, timeout=aiohttp.ClientTimeout(total=6)) as r_sign:
-            if r_sign.status == 200:
-                d_sign = await r_sign.json()
-                if d_sign.get("code") == 200:
-                    claimed_tvr += float(d_sign.get("data", {}).get("points", 0) or 0.1)
-
-        # Lottery spin
-        async with session.post("https://tavoranode.vip/api/user/user/user-lottery/create", headers=headers, json={}, timeout=aiohttp.ClientTimeout(total=6)) as r_lot:
-            if r_lot.status == 200:
-                d_lot = await r_lot.json()
-                if d_lot.get("code") == 200:
-                    claimed_tvr += float(d_lot.get("data", {}).get("prize", 0) or 0)
-
-        if claimed_tvr > 0:
-            await record_payout_receipt("TAVORA Node", "TVR", claimed_tvr, "TAVORA Balance", uid, name)
-            return {"protocol": "TAVORA Node", "amount": claimed_tvr, "symbol": "TVR", "recipient": "Node Balance"}
-    except Exception:
-        pass
-    return None
-
-
-async def withdraw_jvault(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
-    """JVault Miner: Withdraw JVT (>= 250 JVT) to Master TON Vault and claim team commissions."""
-    jv_init = tokens.get("jvault_init_data")
-    if not jv_init or not ton_addr:
-        return None
-
-    try:
-        headers = {
-            "Authorization": f"tma {jv_init}",
-            "Content-Type": "application/json",
-            "Origin": "https://jvaultminer.world",
-            "Referer": "https://jvaultminer.world/",
-            "User-Agent": BROWSER_HEADERS["User-Agent"]
-        }
-        jv_uid = f"usr_{uid}"
-        # 1. Sync & verify user
-        sync_b = {"telegramId": uid, "username": name, "initData": jv_init}
-        async with session.post("https://jvaultminer.world/api/user/sync", json=sync_b, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as sr:
-            if sr.status != 200:
-                return None
-            sd = await sr.json()
-            u = sd.get("user", {})
-            jv_uid = u.get("id", jv_uid)
-            holding = float(u.get("holdingBalance", 0) or 0)
-            avail = float(u.get("totalAssets", 0) or holding)
-
-        # 2. Claim invite bonus & team commissions (especially for Master Account)
-        try:
-            await session.post("https://jvaultminer.world/api/user/claim-invite-bonus", json={"userId": jv_uid}, headers=headers, timeout=aiohttp.ClientTimeout(total=5))
-            await session.post("https://jvaultminer.world/api/user/claim-team-commission", json={"userId": jv_uid}, headers=headers, timeout=aiohttp.ClientTimeout(total=5))
-        except Exception:
-            pass
-
-        # 3. Withdraw if >= 250 JVT
-        if avail >= 250.0:
-            wd_payload = {"userId": jv_uid, "tonWallet": ton_addr, "amount": avail}
-            async with session.post("https://jvaultminer.world/api/user/withdraw", json=wd_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as wr:
-                if wr.status == 200:
-                    wd_d = await wr.json()
-                    if wd_d.get("success"):
-                        await record_payout_receipt("JVault Miner", "JVT", avail, ton_addr, uid, name)
-                        return {"protocol": "JVault Miner", "amount": avail, "symbol": "JVT", "recipient": ton_addr}
+        from cherry_miner import CherryClient
+        client = CherryClient(uid, name, cherry_init, ton_wallet=ton_addr or MASTER_TON_VAULT)
+        res = await client.run_full_farming_cycle(session)
+        if res and res.get("claimed_referral", 0) > 0:
+            amt = float(res.get("claimed_referral", 0))
+            await record_payout_receipt("Cherry Play", "🍒", amt, ton_addr or "Cherry Balance", uid, name)
+            return {"protocol": "Cherry Play", "amount": amt, "symbol": "🍒", "recipient": ton_addr or "Cherry Balance"}
     except Exception:
         pass
     return None
@@ -928,19 +865,12 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
             results["receipts"].append(vic_res)
             results["by_protocol"]["Victor's Company"] = results["by_protocol"].get("Victor's Company", 0) + 1
 
-        # 6. TAVORA Node (Node Dividend & Lottery Sweep)
-        tvr_res = await sweep_tavora_node(session, uid, name, tokens)
-        if tvr_res:
+        # 6. Cherry Play (Referral Yields & Wheel Spin Sweep)
+        cherry_res = await sweep_cherry_play(session, uid, name, tokens, ton_addr)
+        if cherry_res:
             results["total_withdrawn_count"] += 1
-            results["receipts"].append(tvr_res)
-            results["by_protocol"]["TAVORA Node"] = results["by_protocol"].get("TAVORA Node", 0) + 1
-
-        # 7. JVault Miner (>= 250 JVT to Master TON Vault)
-        jv_res = await withdraw_jvault(session, uid, name, tokens, ton_addr)
-        if jv_res:
-            results["total_withdrawn_count"] += 1
-            results["receipts"].append(jv_res)
-            results["by_protocol"]["JVault Miner"] = results["by_protocol"].get("JVault Miner", 0) + 1
+            results["receipts"].append(cherry_res)
+            results["by_protocol"]["Cherry Play"] = results["by_protocol"].get("Cherry Play", 0) + 1
 
         # 8. MexoEarn (>= 1666.67 MXO to Master EVM Vault)
         mexo_res = await withdraw_mexoearn(session, uid, name, tokens)
