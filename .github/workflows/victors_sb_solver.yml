@@ -53,5 +53,11 @@ jobs:
           REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           OWNER_ID: "${{ secrets.OWNER_ID || '6727787768' }}"
+          TELEGRAM_API_ID: "${{ secrets.TELEGRAM_API_ID || '37321306' }}"
+          TELEGRAM_API_HASH: "${{ secrets.TELEGRAM_API_HASH || '5cd9e5bbfb572a4429a0c54774153b47' }}"
+          SUPABASE_URL: "${{ secrets.SUPABASE_URL || 'https://znbbaozpevurvbfkxakz.supabase.co' }}"
+          SUPABASE_SERVICE_KEY: "${{ secrets.SUPABASE_SERVICE_KEY || secrets.SUPABASE_ANON_KEY }}"
+          SUPABASE_ANON_KEY: "${{ secrets.SUPABASE_ANON_KEY }}"
+          WEBSHARE_PROXY: "${{ secrets.WEBSHARE_PROXY || secrets.PROXY || '' }}"
         run: |
           python victors_sb_solver.py
