@@ -398,19 +398,142 @@ def create_victors_ton_proof(wallet_entry: dict, nonce: str) -> tuple:
     return proof_item, state_init_b64, pub_key_bytes.hex(), friendly_addr
 
 
-def probe_account(uid: int, v_init: str) -> tuple:
+def fetch_fresh_victors_token_mtproto(uid: int, is_master: bool) -> str:
+    """
+    Directly extracts a fresh WebApp initData token for Victor's Company
+    using the account's Telethon StringSession from Supabase fleet_accounts or accounts.json.
+    Ensures the token auth_date is 0 seconds old to pass Victor's strict 1-hour session limit.
+    """
+    logger.info(f"🔄 UID {uid}: Fetching fresh Victor's Company WebApp token via MTProto...")
+    try:
+        from telethon import TelegramClient
+        from telethon.sessions import StringSession
+        from telethon.tl.functions.messages import RequestAppWebViewRequest
+        from telethon.tl.types import InputBotAppShortName
+    except ImportError:
+        logger.warning(f"UID {uid}: Telethon not installed; cannot refresh via MTProto.")
+        return None
+
+    api_id = int(os.getenv("TELEGRAM_API_ID", "37321306"))
+    api_hash = os.getenv("TELEGRAM_API_HASH", "5cd9e5bbfb572a4429a0c54774153b47")
+    sb_url = os.getenv("SUPABASE_URL") or "https://znbbaozpevurvbfkxakz.supabase.co"
+    sb_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+
+    sess_str = None
+    # 1. Try local accounts.json
+    if os.path.exists(ACCOUNTS_FILE):
+        try:
+            with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
+                accs = json.load(f)
+                for a in accs:
+                    if str(a.get("user_id") or a.get("account_id") or a.get("id")) == str(uid):
+                        sess_str = a.get("session_string") or a.get("session")
+                        break
+        except Exception:
+            pass
+
+    # 2. Try Supabase fleet_accounts
+    if not sess_str and sb_url and sb_key:
+        try:
+            req = urllib.request.Request(
+                f"{sb_url}/rest/v1/fleet_accounts?select=id,session_string&id=eq.{uid}",
+                headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"}
+            )
+            with urllib.request.urlopen(req, timeout=8) as r:
+                rows = json.loads(r.read().decode())
+                if rows and isinstance(rows, list):
+                    sess_str = rows[0].get("session_string")
+        except Exception as e:
+            logger.debug(f"UID {uid}: Supabase session query note: {e}")
+
+    if not sess_str:
+        logger.warning(f"UID {uid}: No MTProto StringSession found in local or Supabase.")
+        return None
+
+    async def _extract():
+        cl = TelegramClient(StringSession(sess_str), api_id, api_hash, timeout=12)
+        try:
+            await cl.connect()
+            if not await cl.is_user_authorized():
+                logger.warning(f"UID {uid}: MTProto session not authorized.")
+                return None
+            bot_in = await cl.get_input_entity("Victors_Company_bot")
+            start_p = None if is_master else VICTORS_REF
+            res = await cl(RequestAppWebViewRequest(
+                peer=bot_in,
+                app=InputBotAppShortName(bot_id=bot_in, short_name="app"),
+                platform="android",
+                start_param=start_p
+            ))
+            url = getattr(res, "url", "")
+            p = urllib.parse.urlparse(url)
+            frag = urllib.parse.parse_qs(p.fragment).get("tgWebAppData", [None])[0]
+            if frag and (frag.startswith("user%3D") or "%257B" in frag):
+                frag = urllib.parse.unquote(frag)
+            return frag
+        except Exception as ex:
+            logger.warning(f"UID {uid}: MTProto token extraction error: {ex}")
+            return None
+        finally:
+            try:
+                await cl.disconnect()
+            except Exception:
+                pass
+
+    try:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        fresh_token = loop.run_until_complete(_extract())
+        loop.close()
+        if fresh_token:
+            logger.info(f"✨ UID {uid}: Successfully extracted fresh Victor's Company token via MTProto!")
+            # Save to Upstash Redis
+            if UPSTASH_URL and UPSTASH_TOKEN:
+                try:
+                    tok_dict = get_token_from_upstash(uid) or {}
+                    tok_dict["victors_init_data"] = fresh_token
+                    tok_dict["victors_updated_at"] = time.time()
+                    set_req = urllib.request.Request(
+                        f"{UPSTASH_URL}/set/fleet:tokens:{uid}",
+                        data=json.dumps(tok_dict).encode(),
+                        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(set_req, timeout=6):
+                        pass
+                except Exception as ue:
+                    logger.debug(f"UID {uid}: Redis token save note: {ue}")
+            return fresh_token
+    except Exception as e:
+        logger.warning(f"UID {uid}: Extraction loop error: {e}")
+
+    return None
+
+
+def probe_account(uid: int, v_init: str, is_master: bool = False) -> tuple:
     """Rapid health probe to check session validity."""
-    # 1. Pre-flight check: Telegram WebApp auth_date lifetime (< 3 hours for Victor's server limit)
+    needs_refresh = False
     try:
         params = urllib.parse.parse_qs(v_init)
         ad = params.get("auth_date", [None])[0]
         if ad:
             age_sec = time.time() - int(ad)
-            if age_sec > 10800:
-                logger.warning(f"  ⚠️ UID {uid}: Telegram initData auth_date is {age_sec/3600:.1f}h old (> 3.0h Victor's limit). Session expired.")
-                return "EXPIRED", None
+            if age_sec > 3000:  # Victor's Company strictly enforces <= 3600s (1h) max age limit
+                logger.info(f"  ⚠️ UID {uid}: Telegram initData is {age_sec/60:.1f}m old (> 50m limit). Requesting fresh MTProto token...")
+                needs_refresh = True
+        else:
+            needs_refresh = True
     except Exception:
-        pass
+        needs_refresh = True
+
+    if needs_refresh:
+        fresh_tok = fetch_fresh_victors_token_mtproto(uid, is_master)
+        if fresh_tok:
+            v_init = fresh_tok
+        else:
+            logger.warning(f"  ❌ UID {uid}: Token expired and MTProto refresh unavailable. Skipping.")
+            return "EXPIRED", None, v_init
 
     existing_hp = get_victors_pass_from_upstash(uid)
     if existing_hp:
@@ -419,10 +542,10 @@ def probe_account(uid: int, v_init: str) -> tuple:
             extra_headers={"Authorization": f"tma {v_init}", "x-human-pass": existing_hp}
         )
         if code == 200 and isinstance(body, dict) and body.get("success") is True:
-            return "ALREADY_AUTH", existing_hp
+            return "ALREADY_AUTH", existing_hp, v_init
 
     # Session requires Turnstile verification: delegate directly to SeleniumBase UC solver
-    return "HUMAN_REQUIRED", None
+    return "HUMAN_REQUIRED", None, v_init
 
 
 def run_pipeline_for_account(uid: int, v_init: str, human_pass: str, is_master: bool, ton_wallets: dict):
@@ -521,6 +644,24 @@ def sweep_master_bonuses(master_uid: int):
                 m_data = robust_json_loads(m_data)
             if isinstance(m_data, dict):
                 v_init = m_data.get("victors_init_data")
+
+    # Ensure master token is fresh (< 50 minutes old)
+    needs_refresh = False
+    try:
+        if v_init:
+            params = urllib.parse.parse_qs(v_init)
+            ad = params.get("auth_date", [None])[0]
+            if ad and (time.time() - int(ad) > 3000):
+                needs_refresh = True
+        else:
+            needs_refresh = True
+    except Exception:
+        needs_refresh = True
+
+    if needs_refresh:
+        fresh_m = fetch_fresh_victors_token_mtproto(master_uid, is_master=True)
+        if fresh_m:
+            v_init = fresh_m
 
     if not v_init:
         logger.info(f"👑 Master UID {master_uid}: Referral link {VICTORS_REF} is active.")
@@ -867,14 +1008,15 @@ def solve_victors_with_seleniumbase():
 
     for acc in raw_accounts:
         uid = acc["uid"]
-        status, data = probe_account(uid, acc["init_data"])
+        status, data, v_init = probe_account(uid, acc["init_data"], acc["is_master"])
+        acc["init_data"] = v_init
         if status == "HUMAN_REQUIRED":
             logger.info(f"  👉 UID {uid} ({acc['name']}): Session valid -> READY for Turnstile.")
             active_accounts.append(acc)
         elif status == "ALREADY_AUTH":
             logger.info(f"  ✅ UID {uid} ({acc['name']}): Already authenticated! Running qualification...")
             save_victors_pass_to_upstash(uid, data)
-            run_pipeline_for_account(uid, acc["init_data"], data, acc["is_master"], ton_wallets)
+            run_pipeline_for_account(uid, v_init, data, acc["is_master"], ton_wallets)
             solved_count += 1
         elif status == "EXPIRED":
             logger.warning(f"  ⚠️ UID {uid} ({acc['name']}): Session expired. Skipping.")
