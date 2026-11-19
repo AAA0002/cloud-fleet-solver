@@ -61,6 +61,19 @@ BROWSER_HEADERS = {
 }
 
 
+def robust_json_loads(val: Any) -> Any:
+    res = val
+    for _ in range(3):
+        if isinstance(res, str):
+            try:
+                res = json.loads(res)
+            except Exception:
+                break
+        else:
+            break
+    return res if isinstance(res, (dict, list)) else {}
+
+
 def generate_device_id(uid: str) -> str:
     """Generates a stable 36-char hex device ID per account to comply with server X-Device header."""
     return hashlib.sha256(f"cherry_dev_{uid}".encode()).hexdigest()[:36]
@@ -285,17 +298,51 @@ async def harvest_all_cherry_fleet():
     """Runs autonomous Cherry Play farming across all 23 fleet accounts."""
     accs_file = os.path.join(BASE_DIR, "accounts.json")
     tokens_file = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
-    if not os.path.exists(accs_file):
-        print("accounts.json not found")
-        return
+    accs = []
+    if os.path.exists(accs_file):
+        try:
+            with open(accs_file, "r", encoding="utf-8") as f:
+                accs = [a for a in json.load(f) if str(a.get("user_id") or a.get("id")) != "8881914294"]
+        except Exception:
+            pass
 
-    with open(accs_file, "r", encoding="utf-8") as f:
-        accs = [a for a in json.load(f) if str(a.get("user_id") or a.get("id")) != "8881914294"]
+    # Cloud fallback for accounts
+    if not accs and UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:accounts", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                d = json.loads(r.read().decode())
+                res = robust_json_loads(d.get("result"))
+                if isinstance(res, list):
+                    accs = [a for a in res if str(a.get("user_id") or a.get("id")) != "8881914294"]
+        except Exception:
+            pass
+
+    if not accs:
+        print("❌ No accounts loaded from local or cloud stores.")
+        return
 
     tokens_db = {}
     if os.path.exists(tokens_file):
-        with open(tokens_file, "r", encoding="utf-8") as f:
-            tokens_db = json.load(f)
+        try:
+            with open(tokens_file, "r", encoding="utf-8") as f:
+                tokens_db = json.load(f)
+        except Exception:
+            pass
+
+    # Cloud fallback for tokens
+    if not tokens_db and UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"{UPSTASH_URL}/get/miniapp_tokens", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                d = json.loads(r.read().decode())
+                res = robust_json_loads(d.get("result"))
+                if isinstance(res, dict):
+                    tokens_db = res
+        except Exception:
+            pass
 
     # Load TON wallets
     ton_wallets_file = os.path.join(BASE_DIR, "fleet_ton_wallets.json")
@@ -304,6 +351,18 @@ async def harvest_all_cherry_fleet():
         try:
             with open(ton_wallets_file, "r", encoding="utf-8") as f:
                 ton_map = json.load(f)
+        except Exception:
+            pass
+
+    if not ton_map and UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:wallets:ton", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                d = json.loads(r.read().decode())
+                res = robust_json_loads(d.get("result"))
+                if isinstance(res, dict):
+                    ton_map = res
         except Exception:
             pass
 
