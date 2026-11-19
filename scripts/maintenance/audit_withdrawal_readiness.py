@@ -264,13 +264,17 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
                     balance_gram = (egg_bal * egg_usd) / ch_price if ch_price > 0 else 0.0
                     free_lock = d.get("freeLock", {})
                     threshold = float(free_lock.get("gram", 1.0) or 1.0)
-                    is_ready = balance_gram >= threshold and d.get("usedToday", 0) == 0
+                    needs_verify = free_lock.get("stage") == "verify"
+                    is_ready = balance_gram >= threshold and d.get("usedToday", 0) == 0 and not needs_verify
                     report["protocols"]["chickenland"] = {
                         "balance": balance_gram, "threshold": threshold, "unit": "GRAM",
-                        "ready": is_ready, "pct": min(100.0, round((balance_gram / threshold) * 100, 1))
+                        "ready": is_ready, "pct": min(100.0, round((balance_gram / threshold) * 100, 1)),
+                        "needs_verify": needs_verify
                     }
                     if is_ready:
                         report["ready_to_withdraw"].append(("chickenland", balance_gram, "GRAM"))
+                    elif needs_verify and balance_gram >= threshold:
+                        report["upstream_paused_claims"].append(("chickenland", balance_gram, "GRAM"))
         except Exception:
             pass
 
@@ -596,7 +600,14 @@ async def run_audit_and_sweep(execute_sweep: bool = False, notify: bool = True):
         print(f"\n⏸️ UPSTREAM PAUSED BY BOT DEVELOPERS ({len(all_upstream_paused)} accounts met threshold):")
         for uid, name, bot_id, bal, unit in all_upstream_paused:
             proto_info = WITHDRAWAL_THRESHOLDS.get(bot_id, {})
-            print(f"  ⏸️ [{name}] {proto_info.get('name', bot_id)}: {bal:.2f} {unit} (Upstream cashouts disabled by bot team pending TGE - HTTP 503)")
+            p_name = proto_info.get('name', bot_id)
+            if bot_id == "chickenland":
+                reason = "First free payout completed; upstream deposit verification required"
+            elif bot_id == "kynex":
+                reason = "Upstream cashouts disabled by bot team pending TGE - HTTP 503"
+            else:
+                reason = "Upstream cashouts paused by bot team"
+            print(f"  ⏸️ [{name}] {p_name}: {bal:.2f} {unit} ({reason})")
 
     print("=" * 75)
 
