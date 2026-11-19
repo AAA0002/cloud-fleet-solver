@@ -448,19 +448,43 @@ async def withdraw_earnvault(session: aiohttp.ClientSession, uid: str, name: str
 
 async def sweep_victors_company(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Victor's Company: Claim shift coins and claim crew recruitment commissions into Master account."""
-    vic_token = tokens.get("victors_init_data")
+    vic_token = tokens.get("victors_init_data") or tokens.get("vic_init_data") or tokens.get("victors_company") or tokens.get("victors")
     if not vic_token:
         return None
 
     try:
+        vic_pass = tokens.get("victors_pass") or tokens.get("victors_human_pass")
+        if not vic_pass and UPSTASH_URL and UPSTASH_TOKEN:
+            try:
+                async with session.get(f"{UPSTASH_URL}/get/victors:pass:{uid}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as p_resp:
+                    if p_resp.status == 200:
+                        p_data = await p_resp.json()
+                        r_pass = p_data.get("result")
+                        if r_pass:
+                            vic_pass = r_pass
+            except Exception:
+                pass
+
         headers = {
-            "x-telegram-init-data": vic_token,
+            "Authorization": f"tma {vic_token}",
+            "Origin": "https://app.victors.company",
+            "Referer": "https://app.victors.company/",
             "Content-Type": "application/json",
             "User-Agent": BROWSER_HEADERS["User-Agent"]
         }
+        if vic_pass:
+            if isinstance(vic_pass, str) and vic_pass.strip().startswith("{"):
+                try:
+                    p_hp = json.loads(vic_pass)
+                    if isinstance(p_hp, dict) and p_hp.get("humanPass"):
+                        vic_pass = p_hp.get("humanPass")
+                except Exception:
+                    pass
+            headers["x-human-pass"] = str(vic_pass)
+
         # 1. Claim active mining shift
         claimed_shift = 0.0
-        async with session.post("https://server.victors.company/api/mining/claim", headers=headers, timeout=aiohttp.ClientTimeout(total=6)) as r_claim:
+        async with session.post("https://server.victors.company/api/mining/claim", headers=headers, json={}, timeout=aiohttp.ClientTimeout(total=6)) as r_claim:
             if r_claim.status == 200:
                 d = await r_claim.json()
                 claimed_shift = float(d.get("mined", 0) or 0)
@@ -468,10 +492,14 @@ async def sweep_victors_company(session: aiohttp.ClientSession, uid: str, name: 
         # 2. Master Account Only: Claim 10% crew commissions and referral bonuses
         claimed_comm = 0.0
         if uid == "6727787768":
-            async with session.post("https://server.victors.company/api/referral/claim-commission", headers=headers, timeout=aiohttp.ClientTimeout(total=6)) as r_comm:
+            async with session.post("https://server.victors.company/api/referral/claim-bonus", headers=headers, json={}, timeout=aiohttp.ClientTimeout(total=6)) as r_b:
+                if r_b.status == 200:
+                    d_b = await r_b.json()
+                    claimed_comm += float(d_b.get("claimed", 0) or d_b.get("bonus", 0) or 0)
+            async with session.post("https://server.victors.company/api/referral/claim-commission", headers=headers, json={}, timeout=aiohttp.ClientTimeout(total=6)) as r_comm:
                 if r_comm.status == 200:
                     d_comm = await r_comm.json()
-                    claimed_comm = float(d_comm.get("claimed", 0) or d_comm.get("commission", 0) or 0)
+                    claimed_comm += float(d_comm.get("claimed", 0) or d_comm.get("commission", 0) or 0)
 
         total_vic = claimed_shift + claimed_comm
         if total_vic > 0:
@@ -722,8 +750,17 @@ async def withdraw_azm(session: aiohttp.ClientSession, uid: str, name: str, toke
         return None
     try:
         h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
-        AZM_BASE = os.getenv("AZM_API_BASE", "https://provide-presentation-subsidiaries-heel.trycloudflare.com/api").rstrip("/")
-        async with session.get(f"{AZM_BASE}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
+        azm_base = tokens.get("azm_api_base") or os.getenv("AZM_API_BASE", "https://amd-dot-thin-resident.trycloudflare.com/api").rstrip("/")
+        if UPSTASH_URL and UPSTASH_TOKEN and "trycloudflare" in azm_base:
+            try:
+                async with session.get(f"{UPSTASH_URL}/get/fleet:azm_api_base", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=2)) as r_b:
+                    if r_b.status == 200:
+                        b_val = (await r_b.json()).get("result")
+                        if b_val and isinstance(b_val, str) and b_val.startswith("http"):
+                            azm_base = b_val.strip().rstrip("/")
+            except Exception:
+                pass
+        async with session.get(f"{azm_base}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
             if r.status != 200:
                 return None
             d = await r.json()
