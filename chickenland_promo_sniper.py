@@ -41,6 +41,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from axiom_logger import log_axiom_event
+except Exception:
+    def log_axiom_event(*args, **kwargs):
+        pass
+
 # Constants & Configuration
 CHANNEL_USERNAME = "ChickenLandCodes"
 CHANNEL_ID = -1004433995185
@@ -1059,6 +1065,14 @@ async def snipe_promo_fleet(
                     alert_msg += f"🐣 <b>Autonomous Expansion:</b> {hens_bought} basic hens purchased!\n"
                 alert_msg += f"🛡 <i>Unlimited Public Cloud Runner & Turso Engine</i>"
                 send_telegram_alert(alert_msg, code=code)
+                log_axiom_event("chickenland_sniper", "promo_sniped", "info", {
+                    "code": code,
+                    "claimed_accounts": len(successful),
+                    "total_accounts": len(fleet),
+                    "coins_earned": total_coins,
+                    "hens_bought": hens_bought,
+                    "latency_seconds": round(duration, 3)
+                })
             elif unauth_count >= max(5, int(len(fleet) * 0.6)):
                 alert_msg = (
                     f"⚠️ <b>CHICKEN LAND PROMO SNIPER ALERT</b> 🐔\n\n"
@@ -1517,6 +1531,10 @@ async def start_heartbeat_loop(max_runtime: float = 0.0):
                     turso_set("fleet:chickenland_sniper:heartbeat", hb_data)
                 except Exception:
                     pass
+            try:
+                log_axiom_event("chickenland_sniper", "heartbeat", "info", hb_data)
+            except Exception:
+                pass
 
             # 2. Check max runtime relay handoff (e.g. before 6h GitHub Actions runner cap)
             if max_runtime > 0 and uptime >= max_runtime:
