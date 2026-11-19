@@ -2775,9 +2775,9 @@ async def main():
             azm_cl = res.get("azm", {}).get("tasks_claimed", 0)
             dillo_cl = res.get("dillo", {}).get("tasks_claimed", 0)
             hntr_cl = res.get("hunter", {}).get("tasks_claimed", 0)
-            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + jv_cl + tav_cl + vic_cl + azm_cl + dillo_cl + hntr_cl
+            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + cherry_cl + vic_cl + azm_cl + dillo_cl + hntr_cl
             total_tasks += acc_total
-            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} JV:{jv_cl} TVR:{tav_cl} VIC:{vic_cl} AZM:{azm_cl} DIL:{dillo_cl} HNT:{hntr_cl} | Tot: {acc_total}")
+            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} CHY:{cherry_cl} VIC:{vic_cl} AZM:{azm_cl} DIL:{dillo_cl} HNT:{hntr_cl} | Tot: {acc_total}")
 
         logger.info("=" * 80)
         logger.info(f"🏁 GRAND TOTAL SIDE-TASKS/REWARDS CLAIMED: {total_tasks}")
@@ -2804,10 +2804,10 @@ async def main():
 
         if bot_token and notif_channel:
             short_card = (
-                f"⚡ <b>Fleet 15-Bot Auto-Harvest Complete</b>\n"
+                f"⚡ <b>Fleet 14-Bot Auto-Harvest Complete</b>\n"
                 f"• <b>Accounts Farmed:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code>\n"
                 f"• <b>Tasks & Rewards Claimed:</b> <code>{total_tasks} Total Claimed</code>\n"
-                f"• <b>Active Protocols (15/15):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • JV:{jv_tot} • TVR:{tav_tot} • VIC:{vic_tot} • AZM:{azm_tot} • DIL:{dillo_tot} • HNT:{hntr_tot}</code>\n"
+                f"• <b>Active Protocols (14/14):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • CHY:{cherry_tot} • VIC:{vic_tot} • AZM:{azm_tot} • DIL:{dillo_tot} • HNT:{hntr_tot}</code>\n"
                 f"• <b>Duration:</b> <code>{elapsed:.1f}s</code> | <b>Node:</b> <code>GitHub Actions Cloud Runner & Edge Mesh</code>\n"
                 f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
             )
