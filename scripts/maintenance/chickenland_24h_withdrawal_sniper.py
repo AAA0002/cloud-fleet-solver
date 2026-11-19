@@ -68,12 +68,66 @@ def robust_json_loads(val):
     return res if isinstance(res, (dict, list)) else {}
 
 
+def turso_get_sync(key: str):
+    """Fetches a key value from Turso LibSQL kv_mesh table (<15ms, zero rate-limit friction)."""
+    t_url = os.getenv("TURSO_URL") or os.getenv("TURSO_DB_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
+    t_token = os.getenv("TURSO_TOKEN") or os.getenv("TURSO_DB_TOKEN") or ""
+    if not t_token:
+        return None
+    endpoint = f"{t_url.rstrip('/')}/v2/pipeline"
+    payload = {
+        "requests": [
+            {
+                "type": "execute",
+                "stmt": {
+                    "sql": "SELECT val FROM kv_mesh WHERE key = ? LIMIT 1",
+                    "args": [{"type": "text", "value": key}]
+                }
+            }
+        ]
+    }
+    req = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {t_token}",
+            "Content-Type": "application/json"
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("results", [])
+            if results and results[0].get("response", {}).get("result", {}).get("rows"):
+                raw_val = results[0]["response"]["result"]["rows"][0][0].get("value")
+                return raw_val
+    except Exception:
+        pass
+    return None
+
+
 def load_tokens():
     tokens = {}
-    # 1. Cloud-First: Fetch fresh tokens from Upstash Redis
+    # 1. Turso LibSQL SSOT (0 rate limits, 25M free monthly ops)
+    try:
+        raw_miniapp = turso_get_sync("miniapp_tokens")
+        if raw_miniapp:
+            parsed = robust_json_loads(raw_miniapp)
+            if isinstance(parsed, dict) and parsed:
+                tokens.update(parsed)
+        for uid in ACCOUNTS_MAP.keys():
+            raw_uid = turso_get_sync(f"fleet:tokens:{uid}")
+            if raw_uid:
+                p_uid = robust_json_loads(raw_uid)
+                if isinstance(p_uid, dict) and p_uid:
+                    tokens.setdefault(uid, {}).update(p_uid)
+    except Exception as e_turso:
+        print(f"⚠️ Turso LibSQL token load note: {e_turso}")
+
+    # 2. Cloud-First Mirror: Fetch fresh tokens from Upstash Redis if missing
     up_url = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL")
     up_token = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN")
-    if up_url and up_token:
+    if up_url and up_token and not tokens:
         try:
             req = urllib.request.Request(f"{up_url.rstrip('/')}/get/miniapp_tokens", headers={"Authorization": f"Bearer {up_token}"})
             with urllib.request.urlopen(req, timeout=6) as resp:
@@ -96,7 +150,7 @@ def load_tokens():
             except Exception:
                 pass
 
-    # 2. Local Fallback: Merge local fleet_miniapp_tokens.json
+    # 3. Local Fallback: Merge local fleet_miniapp_tokens.json
     tok_file = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
     if os.path.exists(tok_file):
         try:
