@@ -11,16 +11,16 @@ against official, ground-truth payout thresholds:
 2. PepeGram: >= 1,000 PEPE -> Auto-swap to TON & cashout to Master TON Vault
 3. Lifetime Energy: >= 1,000 Energy -> Cashout to Master TON Vault
 4. EarnVault: >= $1.00 USD (100 cents) -> BEP20 USDT cashout to Master EVM Vault
-5. JVault Miner: >= 250 JVT (minWithdrawJvt: 250) -> Cashout to Master TON Vault
+5. Cherry Play: >= 100 🍒 -> Yield claims & withdrawals to Master TON Vault
 6. MexoEarn: >= 1,666.67 MXO ($0.50 USDT min at 0.0003 rate) -> BEP20 to Master EVM Vault
 7. MyAgeApp: >= 0.5 GRAM (S.withdraw.min = 0.5) -> Cashout to Master TON Vault
 8. Kynex Network: >= 62,500 KNX ($5.00 USD at 0.00008 rate) -> BEP20 to Master EVM Vault
 9. AdxEarn AI: >= 70,000 Points ($7.00 USD) -> BEP20 USDT to Master EVM Vault
 10. ATF Miner: >= 10,000 ATF (fee: 70 ATF) -> On-chain TON withdrawal
 11. Victor's Company: Shifts & 10% crew mining commissions swept to Master Account
-12. TAVORA Node: Daily node sign-in dividends & lottery yields swept to balance
-13. AZM Miner: >= 10,000 AZM -> On-chain TON withdrawal to dedicated TON wallet
-14. Dillo Miner: >= 2,400,000 DILLO -> Jetton withdrawal to dedicated TON wallet
+12. AZM Miner: >= 10,000 AZM -> On-chain TON withdrawal to dedicated TON wallet
+13. Dillo Miner: >= 2,400,000 DILLO -> Jetton withdrawal to dedicated TON wallet
+14. Hunter Miner: >= 0.05 GRAM -> Mining claim to Master TON Vault
 
 Complies with:
 - Rule 4: Zero Phone Load Directive (100% Cloud Execution)
@@ -91,12 +91,12 @@ WITHDRAWAL_THRESHOLDS = {
         "action": "Cashout to BEP20 USDT to Master EVM Vault",
         "unit": "USD"
     },
-    "jvault": {
-        "name": "JVault Miner",
-        "symbol": "JVT",
-        "threshold": 250.0,
-        "action": "Withdraw JVT to bound TON wallet",
-        "unit": "JVT"
+    "cherry": {
+        "name": "Cherry Play",
+        "symbol": "CHERRY",
+        "threshold": 100.0,
+        "action": "Withdraw CHERRY yields to bound TON wallet",
+        "unit": "🍒"
     },
     "mexo": {
         "name": "MexoEarn",
@@ -139,13 +139,6 @@ WITHDRAWAL_THRESHOLDS = {
         "threshold": 5.0,
         "action": "Claim shift & 10% crew recruitment commission",
         "unit": "VICX"
-    },
-    "tavora": {
-        "name": "TAVORA Node",
-        "symbol": "TVR",
-        "threshold": 1.0,
-        "action": "Claim node dividend to TVR balance",
-        "unit": "TVR"
     },
     "azm": {
         "name": "AZM Miner",
@@ -316,25 +309,30 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
         except Exception:
             pass
 
-    # 4. JVault Miner
-    jv_init = tokens.get("jvault_init_data")
-    if jv_init:
+    # 4. Cherry Play
+    cherry_init = tokens.get("cherry_init_data") or tokens.get("cherry") or tokens.get("cherryplay_init_data")
+    if cherry_init:
         try:
-            h = {"Authorization": f"tma {jv_init}", "Content-Type": "application/json", "Origin": "https://jvaultminer.world"}
-            sync_b = {"telegramId": uid, "username": acc.get("username", name), "initData": jv_init}
-            async with session.post("https://jvaultminer.world/api/user/sync", json=sync_b, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                if r.status == 200:
+            h = {
+                "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36",
+                "Accept": "application/json",
+                "x-auth": cherry_init,
+                "Origin": "https://cherryearn.site",
+                "Referer": "https://cherryearn.site/"
+            }
+            async with session.get("https://api.cherryearn.site/api/bootstrap", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                if r.status in (200, 201):
                     d = await r.json()
                     u = d.get("user", {})
-                    balance = float(u.get("totalAssets", 0) or u.get("holdingBalance", 0) or 0)
-                    threshold = WITHDRAWAL_THRESHOLDS["jvault"]["threshold"]
-                    is_ready = balance >= threshold and u.get("isVerified")
-                    report["protocols"]["jvault"] = {
-                        "balance": balance, "threshold": threshold, "unit": "JVT",
+                    balance = float(u.get("balance", 0) or 0)
+                    threshold = WITHDRAWAL_THRESHOLDS["cherry"]["threshold"]
+                    is_ready = balance >= threshold
+                    report["protocols"]["cherry"] = {
+                        "balance": balance, "threshold": threshold, "unit": "🍒",
                         "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1))
                     }
                     if is_ready:
-                        report["ready_to_withdraw"].append(("jvault", balance, "JVT"))
+                        report["ready_to_withdraw"].append(("cherry", balance, "🍒"))
         except Exception:
             pass
 
@@ -468,22 +466,6 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             }
             if is_ready:
                 report["ready_to_withdraw"].append(("victors", vic_bal, "VICX"))
-        except Exception:
-            pass
-
-    # 12. TAVORA Node
-    tvr_init = tokens.get("tavora_init_data") or tokens.get("tvr_init_data")
-    if tvr_init:
-        try:
-            tvr_bal = float(tokens.get("tavora_balance", 0) or acc.get("tavora_balance", 0) or 0)
-            threshold = WITHDRAWAL_THRESHOLDS["tavora"]["threshold"]
-            is_ready = tvr_bal >= threshold
-            report["protocols"]["tavora"] = {
-                "balance": tvr_bal, "threshold": threshold, "unit": "TVR",
-                "ready": is_ready, "pct": min(100.0, round((tvr_bal / threshold) * 100, 1)) if threshold > 0 else 0
-            }
-            if is_ready:
-                report["ready_to_withdraw"].append(("tavora", tvr_bal, "TVR"))
         except Exception:
             pass
 
