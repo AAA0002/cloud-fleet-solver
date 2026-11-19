@@ -243,6 +243,11 @@ async def withdraw_chickenland(session: aiohttp.ClientSession, uid: str, name: s
             if used_today > 0 and next_at > 0 and now_ms < next_at:
                 return None  # Cooldown active, next withdrawal unlock in (next_at - now_ms)/1000 seconds
 
+            # Check free-tier verification lock (prevents FREE_VERIFY error)
+            free_lock = wi_d.get("freeLock", {})
+            if free_lock and free_lock.get("stage") == "verify":
+                return None  # First free withdrawal completed; upstream verification required
+
             f_cfg = wi_d.get("first", {})
             if f_cfg and f_cfg.get("on"):
                 min_eggs = int(f_cfg.get("eggs", 15))
