@@ -469,10 +469,37 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             pass
 
     # 11. Victor's Company
-    vic_init = tokens.get("victors_init_data") or tokens.get("vic_init_data")
+    vic_init = tokens.get("victors_init_data") or tokens.get("vic_init_data") or tokens.get("victors_company") or tokens.get("victors")
     if vic_init:
         try:
             vic_bal = float(tokens.get("victors_balance", 0) or acc.get("victors_balance", 0) or 0)
+            vic_pass = tokens.get("victors_pass") or tokens.get("victors_human_pass")
+            if not vic_pass and UPSTASH_URL and UPSTASH_TOKEN:
+                try:
+                    async with session.get(f"{UPSTASH_URL}/get/victors:pass:{uid}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=2)) as r_vp:
+                        if r_vp.status == 200:
+                            p_res = (await r_vp.json()).get("result")
+                            if p_res:
+                                pd = json.loads(p_res) if isinstance(p_res, str) else p_res
+                                vic_pass = pd.get("humanPass") if isinstance(pd, dict) else pd
+                except Exception:
+                    pass
+            if vic_pass and vic_bal == 0:
+                try:
+                    vh = {
+                        "Authorization": f"tma {vic_init}",
+                        "x-human-pass": str(vic_pass),
+                        "Origin": "https://app.victors.company",
+                        "Referer": "https://app.victors.company/",
+                        "User-Agent": "Mozilla/5.0"
+                    }
+                    async with session.get("https://server.victors.company/api/me", headers=vh, timeout=aiohttp.ClientTimeout(total=5)) as vr:
+                        if vr.status == 200:
+                            vd = await vr.json()
+                            vu = vd.get("user") or vd.get("state", {}).get("user") or {}
+                            vic_bal = float(vu.get("inAppBalance", 0) or vu.get("balance", 0) or 0)
+                except Exception:
+                    pass
             threshold = WITHDRAWAL_THRESHOLDS["victors"]["threshold"]
             is_ready = vic_bal >= threshold
             report["protocols"]["victors"] = {
@@ -489,8 +516,17 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
     if azm_init:
         try:
             h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0"}
-            AZM_BASE = os.getenv("AZM_API_BASE", "https://provide-presentation-subsidiaries-heel.trycloudflare.com/api").rstrip("/")
-            async with session.get(f"{AZM_BASE}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
+            azm_base = tokens.get("azm_api_base") or os.getenv("AZM_API_BASE", "https://amd-dot-thin-resident.trycloudflare.com/api").rstrip("/")
+            if UPSTASH_URL and UPSTASH_TOKEN and "trycloudflare" in azm_base:
+                try:
+                    async with session.get(f"{UPSTASH_URL}/get/fleet:azm_api_base", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=2)) as r_b:
+                        if r_b.status == 200:
+                            b_val = (await r_b.json()).get("result")
+                            if b_val and isinstance(b_val, str) and b_val.startswith("http"):
+                                azm_base = b_val.strip().rstrip("/")
+                except Exception:
+                    pass
+            async with session.get(f"{azm_base}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
                 if ar.status == 200:
                     d = await ar.json()
                     balance = float(d.get("balance", 0.0) or 0.0)
