@@ -55,6 +55,19 @@ def send_telegram_alert(text: str):
         print(f"  ⚠️ Notification dispatch warning: {e}")
 
 
+def robust_json_loads(val):
+    res = val
+    for _ in range(3):
+        if isinstance(res, str):
+            try:
+                res = json.loads(res)
+            except Exception:
+                break
+        else:
+            break
+    return res if isinstance(res, (dict, list)) else {}
+
+
 def load_tokens():
     tokens = {}
     # 1. Cloud-First: Fetch fresh tokens from Upstash Redis
@@ -65,8 +78,7 @@ def load_tokens():
             req = urllib.request.Request(f"{up_url.rstrip('/')}/get/miniapp_tokens", headers={"Authorization": f"Bearer {up_token}"})
             with urllib.request.urlopen(req, timeout=6) as resp:
                 data = json.loads(resp.read().decode())
-                raw_res = data.get("result")
-                parsed = json.loads(raw_res) if isinstance(raw_res, str) else (raw_res or {})
+                parsed = robust_json_loads(data.get("result"))
                 if isinstance(parsed, dict):
                     tokens.update(parsed)
         except Exception as e:
@@ -78,8 +90,7 @@ def load_tokens():
                 req_t = urllib.request.Request(f"{up_url.rstrip('/')}/get/fleet:tokens:{uid}", headers={"Authorization": f"Bearer {up_token}"})
                 with urllib.request.urlopen(req_t, timeout=4) as resp_t:
                     d_t = json.loads(resp_t.read().decode())
-                    raw_t = d_t.get("result")
-                    p_t = json.loads(raw_t) if isinstance(raw_t, str) else (raw_t or {})
+                    p_t = robust_json_loads(d_t.get("result"))
                     if isinstance(p_t, dict) and p_t:
                         tokens.setdefault(uid, {}).update(p_t)
             except Exception:
