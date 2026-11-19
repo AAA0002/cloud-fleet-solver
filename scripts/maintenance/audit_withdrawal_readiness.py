@@ -165,31 +165,6 @@ WITHDRAWAL_THRESHOLDS = {
 }
 
 
-def load_accounts() -> List[Dict[str, Any]]:
-    """Load accounts from accounts.json or cloud fleet:wallets_vault:* cache."""
-    acc_path = os.path.join(BASE_DIR, "accounts.json")
-    if os.path.exists(acc_path):
-        try:
-            with open(acc_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            import urllib.request
-            url = f"{UPSTASH_URL}/keys/fleet:wallets_vault:*"
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                keys = json.loads(resp.read().decode()).get("result", [])
-                uids = sorted(list(set([k.split(":")[-1] for k in keys if k.split(":")[-1].isdigit() and len(k.split(":")[-1]) >= 9])))
-                return [{"user_id": uid, "name": f"Account {uid}"} for uid in uids]
-        except Exception:
-            pass
-
-    return []
-
-
 def robust_json_loads(val, default=None):
     """Recursively unpack double/triple-serialized JSON from Redis."""
     if val is None:
@@ -209,6 +184,42 @@ def robust_json_loads(val, default=None):
         else:
             break
     return curr if isinstance(curr, (dict, list)) else (default if default is not None else {})
+
+
+def load_accounts() -> List[Dict[str, Any]]:
+    """Load accounts from accounts.json or cloud fleet:wallets_vault:* cache."""
+    acc_path = os.path.join(BASE_DIR, "accounts.json")
+    if os.path.exists(acc_path):
+        try:
+            with open(acc_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:accounts", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                d = json.loads(resp.read().decode())
+                res = robust_json_loads(d.get("result"))
+                if isinstance(res, list) and res:
+                    return res
+        except Exception:
+            pass
+
+        try:
+            import urllib.request
+            url = f"{UPSTASH_URL}/keys/fleet:wallets_vault:*"
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                keys = json.loads(resp.read().decode()).get("result", [])
+                uids = sorted(list(set([k.split(":")[-1] for k in keys if k.split(":")[-1].isdigit() and len(k.split(":")[-1]) >= 9])))
+                return [{"user_id": uid, "name": f"Account {uid}"} for uid in uids]
+        except Exception:
+            pass
+
+    return []
 
 
 async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict[str, Any]:
