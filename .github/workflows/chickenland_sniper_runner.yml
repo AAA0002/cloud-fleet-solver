@@ -38,6 +38,10 @@ jobs:
       - name: Pre-Flight Supervisor Check (Deduplication Guard)
         id: supervisor_check
         env:
+          TURSO_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
+          TURSO_DB_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_DB_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
           UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
           UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
         run: |
