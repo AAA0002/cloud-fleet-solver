@@ -317,8 +317,11 @@ def trigger_cloud_token_refresh(render_node: str) -> bool:
     # 2. GitHub Actions Cloud Workflow Trigger (Unlimited Free Compute & Zero Bandwidth Limits)
     try:
         import subprocess
-        cmd = ["gh", "workflow", "run", "proactive_token_refresher.yml", "--repo", "AAA0002/cloud-fleet-solver"]
+        cmd = ["gh", "workflow", "run", "proactive_token_refresher.yml", "--repo", "AAA0002/cloud-fleet-ops"]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if proc.returncode != 0:
+            cmd = ["gh", "workflow", "run", "proactive_token_refresher.yml", "--repo", "AAA0002/cloud-fleet-solver"]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         if proc.returncode == 0:
             print("✅ Successfully dispatched GitHub Actions token refresher (unlimited free compute).")
             return True
