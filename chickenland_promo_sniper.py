@@ -334,15 +334,32 @@ def mark_code_exhausted(code: str):
     except Exception:
         pass
 
+ALERTED_CODES_GLOBAL: Set[str] = set()
 ALERTED_CODES_TIMESTAMPS: Dict[str, float] = {}
 LAST_EMERGENCY_REFRESH_TIME: float = 0.0
 
 def send_telegram_alert(text: str, code: str = None):
-    """Sends clean notification card to Admin channels with strict anti-spam deduplication."""
+    """Sends clean notification card to Admin channels with strict multi-cloud anti-spam deduplication."""
     if not REPORT_BOT_TOKEN:
         return
     if code:
         c_up = str(code).strip().upper()
+        # 1. Fast in-memory deduplication check
+        if c_up in ALERTED_CODES_GLOBAL:
+            logger.info(f"[Sniper Anti-Spam] Suppressed duplicate alert for {c_up} (in-memory lock)")
+            return
+
+        # 2. Turso LibSQL SSOT deduplication check (cross-process, cross-runner)
+        try:
+            t_alerted = turso_get(f"chickenland:alerted:{c_up}")
+            if t_alerted:
+                ALERTED_CODES_GLOBAL.add(c_up)
+                logger.info(f"[Sniper Anti-Spam] Suppressed duplicate alert for {c_up} (Turso LibSQL SSOT)")
+                return
+        except Exception:
+            pass
+
+        # 3. Upstash Redis secondary check
         last_t = ALERTED_CODES_TIMESTAMPS.get(c_up, 0)
         if not last_t:
             try:
@@ -353,10 +370,18 @@ def send_telegram_alert(text: str, code: str = None):
             except Exception:
                 pass
         # Suppress duplicate alerts for the same code within 24 hours
-        if (time.time() - last_t) < 86400:
+        if last_t and (time.time() - last_t) < 86400:
             logger.info(f"[Sniper Anti-Spam] Suppressed duplicate alert for {c_up} (already alerted within 24h)")
+            ALERTED_CODES_GLOBAL.add(c_up)
             return
+
+        # Mark immediately across in-memory and Turso LibSQL BEFORE dispatching
+        ALERTED_CODES_GLOBAL.add(c_up)
         ALERTED_CODES_TIMESTAMPS[c_up] = time.time()
+        try:
+            turso_set(f"chickenland:alerted:{c_up}", str(time.time()))
+        except Exception:
+            pass
         try:
             redis_command("SET", f"chickenland:alerted:{c_up}", str(time.time()))
         except Exception:
@@ -836,6 +861,8 @@ async def trigger_emergency_token_refresh():
     except Exception:
         pass
 
+ACTIVE_SNIPING_MUTEX: Set[str] = set()
+
 async def snipe_promo_fleet(
     code: str,
     fleet: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -849,44 +876,45 @@ async def snipe_promo_fleet(
     followed by parallel background compounding (Wave 2: Hen Purchasing).
     """
     code = code.strip().upper()
+    if not code:
+        return {"ok": False, "error": "Empty code"}
+
+    # 1. Fast-path in-memory lock: Prevent duplicate concurrent bursts for the exact same code
     if not force:
+        if code in ACTIVE_SNIPING_MUTEX:
+            logger.info(f"[Sniper Mutex] Code {code} is already undergoing active parallel burst. Dropping duplicate execution.")
+            return {"ok": True, "code": code, "claimed_count": 0, "status": "CONCURRENT_BURST_IN_PROGRESS"}
+        if code in CLAIMED_CODES or is_code_claimed(code):
+            logger.info(f"[Sniper Mutex] Code {code} has already been claimed by fleet. Skipping duplicate burst.")
+            return {"ok": True, "code": code, "claimed_count": 0, "status": "ALREADY_CLAIMED"}
         if code in EXHAUSTED_CODES or is_code_exhausted(code):
             logger.info(f"[Sniper Fast-Path] Code {code} is exhausted, skipping.")
-            return {
-                "ok": True,
-                "code": code,
-                "claimed_count": 0,
-                "total_coins": 0,
-                "hens_bought": 0,
-                "status": "EXHAUSTED"
-            }
-        if is_code_fully_claimed_by_fleet(code, fleet_uids=list(CACHED_FLEET_TOKENS.keys()) if CACHED_FLEET_TOKENS else None):
-            logger.info(f"[Sniper Fast-Path] Code {code} already claimed by all fleet accounts, skipping duplicate burst.")
-            return {
-                "ok": True,
-                "code": code,
-                "claimed_count": 0,
-                "total_coins": 0,
-                "hens_bought": 0,
-                "status": "ALREADY_PROCESSED"
-            }
-    async with BURST_LOCK:
-        if not fleet or len(fleet) < 20:
-            fleet = CACHED_FLEET_TOKENS if (CACHED_FLEET_TOKENS and len(CACHED_FLEET_TOKENS) >= 20) else load_fleet_tokens(force_refresh=False)
+            return {"ok": True, "code": code, "claimed_count": 0, "status": "EXHAUSTED"}
 
-        if not fleet:
-            return {"ok": False, "description": "No fleet tokens available"}
+    ACTIVE_SNIPING_MUTEX.add(code)
+    try:
+        async with BURST_LOCK:
+            # Re-check after acquiring lock in case a parallel task just completed this exact code
+            if not force and (code in CLAIMED_CODES or is_code_claimed(code)):
+                logger.info(f"[Sniper Mutex] Code {code} was claimed by another thread while waiting for lock. Dropping duplicate.")
+                return {"ok": True, "code": code, "claimed_count": 0, "status": "ALREADY_CLAIMED"}
 
-        connector = aiohttp.TCPConnector(limit=100, keepalive_timeout=30)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            # Wave 1: Pure Sub-Second Concurrent Redemption Burst (<300ms across 100% of fleet)
-            t_start = time.time()
-            tasks = [
-                redeem_single_account(session, acc, code, auto_buy_hens=auto_buy_hens)
-                for acc in fleet.values()
-            ]
-            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-            total_time = round(time.time() - t_start, 3)
+            if not fleet or len(fleet) < 20:
+                fleet = CACHED_FLEET_TOKENS if (CACHED_FLEET_TOKENS and len(CACHED_FLEET_TOKENS) >= 20) else load_fleet_tokens(force_refresh=False)
+
+            if not fleet:
+                return {"ok": False, "description": "No fleet tokens available"}
+
+            connector = aiohttp.TCPConnector(limit=100, keepalive_timeout=30)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                # Wave 1: Pure Sub-Second Concurrent Redemption Burst (<300ms across 100% of fleet)
+                t_start = time.time()
+                tasks = [
+                    redeem_single_account(session, acc, code, auto_buy_hens=auto_buy_hens)
+                    for acc in fleet.values()
+                ]
+                raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+                total_time = round(time.time() - t_start, 3)
 
             results = []
             fleet_uids = list(fleet.keys())
@@ -1012,6 +1040,14 @@ async def snipe_promo_fleet(
         # Telegram Alert Card with full operational transparency
         if send_alert:
             if successful:
+                CLAIMED_CODES.add(code)
+                SEEN_CODES.add(code)
+                try:
+                    turso_execute("INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, unixepoch())",
+                                  [f"chickenland:claimed_codes_set:{code}", "1"])
+                except Exception:
+                    pass
+
                 alert_msg = (
                     f"⚡ <b>CHICKEN LAND PROMO CODE SNIPED!</b> 🐔\n\n"
                     f"🎟 <b>Code:</b> <code>{code}</code>\n"
@@ -1021,7 +1057,7 @@ async def snipe_promo_fleet(
                 )
                 if hens_bought > 0:
                     alert_msg += f"🐣 <b>Autonomous Expansion:</b> {hens_bought} basic hens purchased!\n"
-                alert_msg += f"🛡 <i>Cloud Node 2 Sub-Second Sniper Engine</i>"
+                alert_msg += f"🛡 <i>Unlimited Public Cloud Runner & Turso Engine</i>"
                 send_telegram_alert(alert_msg, code=code)
             elif unauth_count >= max(5, int(len(fleet) * 0.6)):
                 alert_msg = (
@@ -1030,22 +1066,31 @@ async def snipe_promo_fleet(
                     f"❌ <b>Error:</b> {unauth_count}/{len(fleet)} accounts failed with <b>401 Unauthorized (Expired Tokens)</b>\n"
                     f"⏱ <b>Burst Latency:</b> {total_time}s\n"
                     f"🔄 <b>Autonomous Action:</b> Triggering emergency token refresh via GitHub Actions Public Runner & Turso...\n"
-                    f"🛡 <i>Public Cloud Runner & Turso Engine</i>"
+                    f"🛡 <i>Unlimited Public Cloud Runner & Turso Engine</i>"
                 )
                 send_telegram_alert(alert_msg, code=code)
                 asyncio.create_task(trigger_emergency_token_refresh())
             elif is_full or is_expired:
+                # CRITICAL GUARD: If the fleet already claimed this code or if majority already claimed, NEVER report exhausted!
+                already_claimed_count = sum(1 for r in results if "already" in str(r.get("code_status", "")).lower() or "claimed" in str(r.get("code_status", "")).lower())
+                if code in CLAIMED_CODES or is_code_claimed(code) or already_claimed_count >= max(2, int(len(fleet) * 0.3)):
+                    logger.info(f"[Sniper Guard] Code {code} was already claimed by fleet ({already_claimed_count} accounts). Suppressing false exhausted alert.")
+                    CLAIMED_CODES.add(code)
+                    return report
+
                 status_desc = "All player spots already claimed by public users" if is_full else "Code validity period has expired"
                 alert_msg = (
                     f"ℹ️ <b>CHICKEN LAND PROMO CODE EXHAUSTED</b> 🐔\n\n"
                     f"🎟 <b>Code:</b> <code>{code}</code>\n"
                     f"❌ <b>Status:</b> {status_desc}\n"
                     f"⏱ <b>Burst Reaction Latency:</b> {total_time}s\n"
-                    f"🛡 <i>Edge Sub-Second Sniper Engine</i>"
+                    f"🛡 <i>Unlimited Public Cloud Runner & Turso Engine</i>"
                 )
                 send_telegram_alert(alert_msg, code=code)
 
         return report
+    finally:
+        ACTIVE_SNIPING_MUTEX.discard(code)
 
 async def fetch_channel_codes_async(session: aiohttp.ClientSession) -> List[Dict[str, Any]]:
     """
@@ -1274,7 +1319,7 @@ async def start_mtproto_listener():
                         mark_code_exhausted(code)
                         return
 
-                    if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and not is_code_claimed(code) and not is_code_exhausted(code):
+                    if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and code not in ACTIVE_SNIPING_MUTEX and not is_code_claimed(code) and not is_code_exhausted(code):
                         print(f"🔥 [MTProto Sniper] NEW LIVE PROMO CODE DETECTED: {code}! LAUNCHING PARALLEL BURST...")
                         t0 = time.time()
                         report = await snipe_promo_fleet(code)
@@ -1303,7 +1348,7 @@ async def start_mtproto_listener():
                         mark_code_exhausted(code)
                         return
 
-                    if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and not is_code_claimed(code) and not is_code_exhausted(code):
+                    if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and code not in ACTIVE_SNIPING_MUTEX and not is_code_claimed(code) and not is_code_exhausted(code):
                         print(f"🔥 [MTProto Sniper] CODE DETECTED IN EDITED MESSAGE: {code}! LAUNCHING BURST...")
                         report = await snipe_promo_fleet(code)
                         print(f"✅ [MTProto Sniper] Edit burst complete: {report['claimed_count']}/{report['total_accounts']} claimed (+{report['total_coins']} coins)")
@@ -1369,7 +1414,7 @@ async def start_http_poller(poll_interval: float = 1.5):
                                     EXHAUSTED_CODES.add(code)
                                     mark_code_exhausted(code)
                                     continue
-                                if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and not is_code_claimed(code) and not is_code_exhausted(code):
+                                if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and code not in ACTIVE_SNIPING_MUTEX and not is_code_claimed(code) and not is_code_exhausted(code):
                                     print(f"🔥 [MTProto Poller] Fresh active code: {code}! Triggering fleet burst...")
                                     t0 = time.time()
                                     rep = await snipe_promo_fleet(code)
@@ -1389,7 +1434,7 @@ async def start_http_poller(poll_interval: float = 1.5):
                         mark_code_exhausted(code)
                         continue
 
-                    if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and not is_code_claimed(code) and not is_code_exhausted(code):
+                    if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and code not in ACTIVE_SNIPING_MUTEX and not is_code_claimed(code) and not is_code_exhausted(code):
                         print(f"🔥 [HTTP Sniper] ACTIVE CODE DISCOVERED: {code}! TRIGGERING FLEET BURST...")
                         t0 = time.time()
                         rep = await snipe_promo_fleet(code)
