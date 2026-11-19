@@ -48,6 +48,14 @@ ADMIN_NOTIFICATION_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-100
 MASTER_TON_VAULT = "UQBPZiSvitdPU3VUyJK2mRaHVBl69xejw5aOrh1KfKA7gwDT"
 CHERRY_REF_CODE = "r9bsfi3a8c"
 API_BASE = "https://api.cherryearn.site/api"
+CF_SECRET_KEY = os.getenv("CF_SECRET_KEY") or os.getenv("SECRET_KEY", "agy_cf_secret_7d36994e_2026")
+CF_PROXY_NODES = [
+    "https://restore-agy.agorameet.workers.dev/api/cherry-proxy",
+    "https://restore-agy.aaa-bot.workers.dev/api/cherry-proxy",
+    "https://restore-agy.aaaai2.workers.dev/api/cherry-proxy",
+    "https://restore-agy.aaa222.workers.dev/api/cherry-proxy",
+    "https://restore-agy.aaaai.workers.dev/api/cherry-proxy"
+]
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36",
@@ -116,6 +124,8 @@ class CherryClient:
                         return await resp.json()
                     elif resp.status == 401:
                         return {"error": "unauthorized", "status": 401}
+                    elif resp.status in (423, 429):
+                        return await self._call_proxy(session, path, body, method, headers)
                     else:
                         txt = await resp.text()
                         return {"error": f"http_{resp.status}", "detail": txt[:200], "status": resp.status}
@@ -125,11 +135,41 @@ class CherryClient:
                         return await resp.json()
                     elif resp.status == 401:
                         return {"error": "unauthorized", "status": 401}
+                    elif resp.status in (423, 429):
+                        return await self._call_proxy(session, path, body, method, headers)
                     else:
                         txt = await resp.text()
                         return {"error": f"http_{resp.status}", "detail": txt[:200], "status": resp.status}
         except Exception as e:
-            return {"error": "exception", "detail": str(e)}
+            return await self._call_proxy(session, path, body, method, headers)
+
+    async def _call_proxy(self, session: aiohttp.ClientSession, path: str, body: Optional[Dict[str, Any]], method: str, headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        """Rotates request across Cloudflare Edge proxy nodes when IP-gated."""
+        if not CF_PROXY_NODES:
+            return {"error": "http_423", "detail": "IP rate limit, no proxy configured", "status": 423}
+        start_idx = (int(self.uid) if self.uid.isdigit() else 0) % len(CF_PROXY_NODES)
+        ordered_proxies = CF_PROXY_NODES[start_idx:] + CF_PROXY_NODES[:start_idx]
+        for p_url in ordered_proxies:
+            try:
+                p_payload = {
+                    "path": path,
+                    "method": method,
+                    "headers": headers,
+                    "data": body if body is not None else {}
+                }
+                p_headers = {
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                    "Authorization": f"Bearer {CF_SECRET_KEY}"
+                }
+                async with session.post(p_url, json=p_payload, headers=p_headers, timeout=aiohttp.ClientTimeout(total=8)) as p_resp:
+                    if p_resp.status == 200:
+                        p_d = await p_resp.json()
+                        if p_d.get("ok"):
+                            return p_d.get("data")
+            except Exception:
+                continue
+        return {"error": "http_423", "detail": "All Cloudflare proxy nodes attempted", "status": 423}
 
     async def bootstrap(self, session: aiohttp.ClientSession) -> Optional[Dict[str, Any]]:
         """Fetch full user state, tasks, streak, friends from /bootstrap."""
