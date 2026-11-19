@@ -60,17 +60,60 @@ def call_dillo(init_data: str, event: str, data: dict = None) -> dict:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+def robust_json_loads(val):
+    res = val
+    for _ in range(3):
+        if isinstance(res, str):
+            try:
+                res = json.loads(res)
+            except Exception:
+                break
+        else:
+            break
+    return res if isinstance(res, (dict, list)) else {}
+
 def load_data():
     tok_file = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
     acc_file = os.path.join(BASE_DIR, "accounts.json")
     tokens = {}
     accounts = []
     if os.path.exists(tok_file):
-        with open(tok_file, "r", encoding="utf-8") as f:
-            tokens = json.load(f)
+        try:
+            with open(tok_file, "r", encoding="utf-8") as f:
+                tokens = json.load(f)
+        except Exception:
+            pass
     if os.path.exists(acc_file):
-        with open(acc_file, "r", encoding="utf-8") as f:
-            accounts = json.load(f)
+        try:
+            with open(acc_file, "r", encoding="utf-8") as f:
+                accounts = json.load(f)
+        except Exception:
+            pass
+
+    # Cloud fallback for GitHub Actions / cloud runners
+    up_url = os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("UPSTASH_URL")
+    up_tok = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_TOKEN")
+    if (not accounts or not tokens) and up_url and up_tok:
+        try:
+            import urllib.request
+            headers = {"Authorization": f"Bearer {up_tok}"}
+            if not accounts:
+                req_a = urllib.request.Request(f"{up_url}/get/fleet:accounts", headers=headers)
+                with urllib.request.urlopen(req_a, timeout=6) as r:
+                    d = json.loads(r.read().decode())
+                    res_a = robust_json_loads(d.get("result"))
+                    if isinstance(res_a, list):
+                        accounts = res_a
+            if not tokens:
+                req_t = urllib.request.Request(f"{up_url}/get/miniapp_tokens", headers=headers)
+                with urllib.request.urlopen(req_t, timeout=6) as r:
+                    d = json.loads(r.read().decode())
+                    res_t = robust_json_loads(d.get("result"))
+                    if isinstance(res_t, dict):
+                        tokens = res_t
+        except Exception:
+            pass
+
     return tokens, accounts
 
 def main():
