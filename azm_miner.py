@@ -34,7 +34,7 @@ import urllib.request
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("azm_miner")
 
-AZM_API_BASE_DEFAULT = "https://provide-presentation-subsidiaries-heel.trycloudflare.com/api"
+AZM_API_BASE_DEFAULT = "https://amd-dot-thin-resident.trycloudflare.com/api"
 MASTER_UID = "6727787768"
 AZM_CIRCUIT_BROKEN = False
 
