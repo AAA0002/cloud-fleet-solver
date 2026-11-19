@@ -7,7 +7,7 @@ Calculates:
 - Total BNB farmed & withdrawn today
 - Real-time fiat valuation (USD $ and BDT ৳) via Binance API
 - Live On-Chain Wallet Balance from Binance Smart Chain
-- Cloudflare Edge Mini-App Yield (15 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, JVault Miner, TAVORA Node, Victor's Company, AZM Miner, Dillo Miner, Hunter Miner)
+- Cloudflare Edge Mini-App Yield (14 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, Victor's Company, AZM Miner, Dillo Miner, Hunter Miner, Cherry Play)
 Broadcasts report to Telegram Payout Channel (-1004402765950) & Admin DM (6727787768).
 """
 
@@ -169,8 +169,7 @@ async def get_fleet_mining_totals() -> dict:
         "mexo": 0.0,
         "myage": 0.0,
         "lifetime": 0.0,
-        "jvault": 0.0,
-        "tavora": 0.0,
+        "cherry": 0.0,
         "victors": 0.0,
         "azm": 0.0,
         "dillo": 0.0,
@@ -249,23 +248,14 @@ async def get_fleet_mining_totals() -> dict:
                                 m = re.search(r"(\d+)\s*WATTS", core_str)
                                 if m: totals["lifetime"] += float(m.group(1))
 
-                        # 11. JVault Miner
-                        elif "jvault" in b_name.lower() or "jv" in b_name.lower():
+                        # 11. Cherry Play
+                        elif "cherry" in b_name.lower():
                             if isinstance(core, dict):
-                                try: totals["jvault"] += float(core.get("holding_balance", 0) or core.get("balance", 0) or 0)
+                                try: totals["cherry"] += float(core.get("balance", 0) or 0)
                                 except Exception: pass
                             else:
-                                m = re.search(r"([\d\.]+)\s*JVT", core_str)
-                                if m: totals["jvault"] += float(m.group(1))
-
-                        # 12. TAVORA Node
-                        elif "tavora" in b_name.lower() or "tvr" in b_name.lower():
-                            if isinstance(core, dict):
-                                try: totals["tavora"] += float(core.get("balance", 0) or core.get("tvr_balance", 0) or 0)
-                                except Exception: pass
-                            else:
-                                m = re.search(r"([\d\.]+)\s*TVR", core_str)
-                                if m: totals["tavora"] += float(m.group(1))
+                                m = re.search(r"([\d\.]+)\s*Cherr", core_str)
+                                if m: totals["cherry"] += float(m.group(1))
 
                         # 13. Victor's Company
                         elif "victor" in b_name.lower():
@@ -322,10 +312,8 @@ async def get_fleet_mining_totals() -> dict:
                     totals["mexo"] = sum(float(a.get("mexo_balance", 0) or (1600 if str(a.get("user_id")) == "6727787768" else 300)) for a in accs)
                 if totals["lifetime"] == 0.0:
                     totals["lifetime"] = sum(float(a.get("lifetime_power", 0) or 0) for a in accs)
-                if totals["jvault"] == 0.0:
-                    totals["jvault"] = sum(float(a.get("jvault_balance", 0) or 0) for a in accs)
-                if totals["tavora"] == 0.0:
-                    totals["tavora"] = sum(float(a.get("tavora_balance", 0) or 0) for a in accs)
+                if totals.get("cherry", 0.0) == 0.0:
+                    totals["cherry"] = sum(float(a.get("cherry_balance", 0) or 0) for a in accs)
                 if totals["victors"] == 0.0:
                     totals["victors"] = sum(float(a.get("victors_balance", 0) or 0) for a in accs)
                 if totals["azm"] == 0.0:
@@ -530,8 +518,7 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• *MexoEarn:* `{fleet_totals['mexo']:,.0f} MXO` earned (Shortlinks & High-Yield Quests)\n"
             f"• *MyAgeApp:* `{fleet_totals['myage']:,.0f} AGE` accumulated (Telegram Age Valuation, Hourly Vault & Spins)\n"
             f"• *Lifetime Energy:* `{fleet_totals['lifetime']:,.0f} WATTS` (Power & Energy Production, Ad Rolls & Tasks)\n"
-            f"• *JVault Miner:* `{fleet_totals['jvault']:,.2f} JVT` (TON Jetton Staking, Tap Mining & Sponsor Tasks)\n"
-            f"• *TAVORA Node:* `{fleet_totals['tavora']:,.2f} TVR` (Node Dividends, Daily Check-in & Referral Tree)\n"
+            f"• *Cherry Play:* `{fleet_totals.get('cherry', 0.0):,.0f} Cherries` (TON Tap Mining, Daily Streaks, Lucky Spins & Tasks)\n"
             f"• *Victor's Company:* `{fleet_totals['victors']:,.0f} Coins` (Autonomous Mining, Shifts & Referral Commissions)\n"
             f"• *AZM Miner:* `{fleet_totals['azm']:,.2f} AZM` (TON Jetton Protocol, 15 AZM/h Active Mining, Streaks & Harvests)\n"
             f"• *Dillo Miner:* `{fleet_totals['dillo']:,.2f} DILLO` (TON Jetton Protocol, 2,400 DILLO/d Passive Farm, Energy Taps & Streaks)\n"
