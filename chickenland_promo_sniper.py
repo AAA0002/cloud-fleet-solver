@@ -55,7 +55,7 @@ UPSTASH_STANDBY_URL = os.getenv("UPSTASH_STANDBY_URL") or "https://rich-emu-1061
 UPSTASH_STANDBY_TOKEN = os.getenv("UPSTASH_STANDBY_TOKEN") or ""
 
 TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
-TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_AUTH_TOKEN") or ""
+TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_TOKEN") or os.getenv("TURSO_AUTH_TOKEN") or ""
 
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN") or ""
 REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID") or "6727787768"
@@ -103,8 +103,8 @@ def turso_execute(sql: str, args: list = None) -> Optional[List[List[Any]]]:
         with urllib.request.urlopen(req, timeout=4) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             results = data.get("results", [])
-            if results and results[0].get("response", {}).get("result", {}).get("rows"):
-                rows = results[0]["response"]["result"]["rows"]
+            if results and results[0].get("type") == "ok":
+                rows = results[0].get("response", {}).get("result", {}).get("rows", [])
                 return [[c.get("value") for c in r] for r in rows]
     except Exception:
         pass
@@ -133,8 +133,8 @@ async def async_turso_execute(session: aiohttp.ClientSession, sql: str, args: li
             if resp.status == 200:
                 data = await resp.json()
                 results = data.get("results", [])
-                if results and results[0].get("response", {}).get("result", {}).get("rows"):
-                    rows = results[0]["response"]["result"]["rows"]
+                if results and results[0].get("type") == "ok":
+                    rows = results[0].get("response", {}).get("result", {}).get("rows", [])
                     return [[c.get("value") for c in r] for r in rows]
     except Exception:
         pass
