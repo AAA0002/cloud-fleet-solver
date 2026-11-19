@@ -25,7 +25,7 @@ import time
 import urllib.request
 import urllib.error
 import urllib.parse
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
@@ -52,6 +52,18 @@ CF_PROXY_NODES = [
     "https://restore-agy.aaa222.workers.dev/api/hunter-proxy",
     "https://restore-agy.aaaai.workers.dev/api/hunter-proxy"
 ]
+
+def robust_json_loads(val: Any) -> Any:
+    res = val
+    for _ in range(3):
+        if isinstance(res, str):
+            try:
+                res = json.loads(res)
+            except Exception:
+                break
+        else:
+            break
+    return res if isinstance(res, (dict, list)) else {}
 
 def load_fleet_data() -> Tuple[Dict, List]:
     tok_file = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
@@ -80,13 +92,13 @@ def load_fleet_data() -> Tuple[Dict, List]:
                 with urllib.request.urlopen(req_a, timeout=5) as r:
                     res_a = json.loads(r.read().decode()).get("result")
                     if res_a:
-                        accounts = json.loads(res_a) if isinstance(res_a, str) else res_a
+                        accounts = robust_json_loads(res_a)
             if not tokens:
                 req_t = urllib.request.Request(f"{UPSTASH_URL}/get/miniapp_tokens", headers=headers)
                 with urllib.request.urlopen(req_t, timeout=5) as r:
                     res_t = json.loads(r.read().decode()).get("result")
                     if res_t:
-                        tokens = json.loads(res_t) if isinstance(res_t, str) else res_t
+                        tokens = robust_json_loads(res_t)
         except Exception:
             pass
 
