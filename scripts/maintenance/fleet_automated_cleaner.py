@@ -80,8 +80,6 @@ OFFICIAL_CHANNEL_IDS: Set[int] = {
     -1004423732240,  # Victor's Company
     -1004363725223,  # Boss Victor
     -1004357728776,  # VICX Withdrawals
-    -1004468831925,  # TAVORA Channel
-    -1003784888036,  # TAVORA Chat
     -1004361242435,  # Chicken Land News
     -1004433995185,  # Chicken Land Codes
     -1003733871523,  # Chicken Land Payments
@@ -101,13 +99,13 @@ OFFICIAL_USERNAMES: Set[str] = {
     # Active 14 Legitimate Mining Bots & Official Channels
     "atfminers_bot", "atf_airdrop_bot", "kynex_miningbot", "pepe_gram_bot",
     "adxearnaibot", "adxearnai", "chickenlandbot", "earnvaultapp_bot", "earnvaulte", "mexoearni_bot",
-    "myageapp", "appmyage", "lifetime_energy_bot", "jvaultminerbot", "tavoranode_bot",
+    "myageapp", "appmyage", "lifetime_energy_bot", "cherryplaybot",
     "victors_company_bot", "azmir_miner_bot", "azmir_channel", "azmir_chat", "azmir_group", "web3primeteam", "solanamemes001",
     "dillo_miner_bot", "dillotonlive",
     # Official Communities & Channels
     "aaaautominer", "aaaautomining", "aaa_activity", "rootofhunter_top",
     "androforever_oficial", "theboss_victor", "victors_company", "vicwithdrawals",
-    "tavoranodechannel", "tavoranodechat", "landchickennews", "chickenlandcodes",
+    "landchickennews", "chickenlandcodes",
     "chickenlandpay", "pepe_grammmm", "mexoearn", "mexoearnpaid",
     "kynex_mining", "ai_trading_forex", "atffarsi",
     # Personal Admin Usernames
