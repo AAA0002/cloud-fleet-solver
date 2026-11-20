@@ -58,6 +58,6 @@ jobs:
           SUPABASE_URL: "${{ secrets.SUPABASE_URL || 'https://znbbaozpevurvbfkxakz.supabase.co' }}"
           SUPABASE_SERVICE_KEY: "${{ secrets.SUPABASE_SERVICE_KEY || secrets.SUPABASE_ANON_KEY }}"
           SUPABASE_ANON_KEY: "${{ secrets.SUPABASE_ANON_KEY }}"
-          WEBSHARE_PROXY: "${{ secrets.WEBSHARE_PROXY || secrets.PROXY || '' }}"
+          PROXY: "${{ secrets.PROXY || '' }}"
         run: |
           python victors_sb_solver.py

@@ -1029,7 +1029,7 @@ def solve_victors_with_seleniumbase():
         return
 
     sb_kwargs = {"uc": True, "test": True, "xvfb": True, "locale": "en", "ad_block": False}
-    proxy_val = os.getenv("WEBSHARE_PROXY") or os.getenv("PROXY") or os.getenv("HTTP_PROXY")
+    proxy_val = os.getenv("PROXY") or os.getenv("HTTP_PROXY")
     if proxy_val:
         sb_kwargs["proxy"] = proxy_val
         logger.info(f"🌐 Routing SeleniumBase UC through proxy: {proxy_val.split('@')[-1] if '@' in proxy_val else proxy_val[:20]}...")
