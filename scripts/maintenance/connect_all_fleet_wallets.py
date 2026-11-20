@@ -5,7 +5,6 @@ scripts/maintenance/connect_all_fleet_wallets.py
 Fleet-Wide Multi-Chain Wallet Connector & Verification Engine (All 23 Accounts)
 =============================================================================
 Connects authentic non-custodial multi-chain wallets across the 11 active legitimate bots:
-1. JVault Miner (@JVaultMinerBot): Connects & verifies dedicated TON wallet via /api/user/connect-wallet
 2. MexoEarn (@MexoEarni_bot): Connects dedicated BEP20 EVM wallet via /api/wallet/connect
 3. ATF Miner (@atfminers_bot): Synchronizes dedicated TON wallet with authentication session
 4. AdxEarn AI (@AdxEarnAibot): Verifies EVM address & automated BEP20 withdrawal eligibility
@@ -104,57 +103,6 @@ def load_data():
     return accs, tokens
 
 
-async def connect_jvault(session, uid: str, name: str, jv_init: str, ton_addr: str) -> dict:
-    res = {"status": "skipped", "bot": "JVault Miner"}
-    if not (jv_init and ton_addr):
-        return res
-    h = {
-        "Content-Type": "application/json",
-        "Authorization": f"tma {jv_init}",
-        "Origin": "https://jvaultminer.world",
-        "Referer": "https://jvaultminer.world/",
-        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36"
-    }
-    try:
-        # Sync user state first
-        b_sync = {
-            "telegramId": str(uid), "username": name,
-            "firstName": name, "lastName": "",
-            "referralCode": "6727787768", "initData": jv_init
-        }
-        req_sync = urllib.request.Request(
-            "https://jvaultminer.world/api/user/sync",
-            data=json.dumps(b_sync).encode(),
-            headers=h
-        )
-        try:
-            with urllib.request.urlopen(req_sync, timeout=8, context=ctx) as r_s:
-                pass
-        except Exception:
-            pass
-
-        url = "https://jvaultminer.world/api/user/connect-wallet"
-        body = json.dumps({"address": ton_addr, "walletType": "tonconnect"}).encode()
-        req = urllib.request.Request(url, data=body, headers=h)
-        with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
-            d = json.loads(r.read().decode())
-            if d.get("success"):
-                res["status"] = "connected"
-                res["wallet"] = d.get("user", {}).get("tonWallet") or ton_addr
-                res["verified"] = d.get("user", {}).get("isVerified", False)
-            elif "expired" in str(d).lower() or "সেশন শেষ" in str(d):
-                res["status"] = "session_expired (pending 24h refresh)"
-            else:
-                res["status"] = str(d.get("error", "connect_failed"))[:30]
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode(errors="ignore") if e.fp else ""
-        if "সেশন শেষ" in err_body or "expired" in err_body.lower():
-            res["status"] = "session_expired (pending 24h refresh)"
-        else:
-            res["status"] = f"HTTP {e.code}"
-    except Exception as e:
-        res["status"] = f"error: {str(e)[:30]}"
-    return res
 
 
 async def connect_mexoearn(session, uid: str, name: str, m_init: str, evm_addr: str) -> dict:
@@ -367,32 +315,6 @@ def create_dillo_ton_proof(wallet_entry: dict, nonce: str) -> dict:
         return None
 
 
-async def connect_azm(session, uid: str, name: str, azm_init: str, ton_addr: str) -> dict:
-    res = {"status": "skipped", "bot": "AZM Miner"}
-    if not azm_init or not ton_addr:
-        res["status"] = "missing_token_or_wallet"
-        return res
-    try:
-        azm_base = "https://amd-dot-thin-resident.trycloudflare.com/api"
-        h = {
-            "Content-Type": "application/json",
-            "X-Init-Data": azm_init,
-            "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36",
-            "Accept": "application/json"
-        }
-        body = json.dumps({"wallet": ton_addr}).encode()
-        req = urllib.request.Request(f"{azm_base}/wallet", data=body, headers=h)
-        with urllib.request.urlopen(req, timeout=6, context=ctx) as resp:
-            if resp.status in (200, 201):
-                res["status"] = "connected"
-                res["address"] = ton_addr
-    except urllib.error.URLError:
-        res["status"] = "upstream_tunnel_offline"
-    except Exception as e:
-        res["status"] = f"error: {str(e)[:30]}"
-    return res
-
-
 async def connect_dillo(session, uid: str, name: str, dillo_init: str, ton_wallet_entry: dict, ton_addr: str, acc: dict) -> dict:
     res = {"status": "skipped", "bot": "Dillo Miner"}
     if not dillo_init:
@@ -501,8 +423,7 @@ async def main():
         "mexoearn_connected": 0,
         "adxearn_ready": 0,
         "atf_verified": 0,
-        "jvault_connected": 0,
-        "lifetime_monitored": 0
+                "lifetime_monitored": 0
     }
 
     for idx, acc in enumerate(accs, 1):
@@ -515,7 +436,6 @@ async def main():
         ew = acc.get("evm_wallet") or {}
         evm_addr = ew.get("address") if isinstance(ew, dict) else ew
         
-        jv_init = t.get("jvault_init_data")
         m_init = t.get("mexoearn_init_data") or t.get("mexo_init_data")
         atf_init = t.get("atf_init_data")
         adx_init = t.get("adxearn_init_data") or t.get("adx_init_data")
@@ -555,13 +475,6 @@ async def main():
         else:
             print(f"   🔋 Lifetime Energy: {lt_res.get('status')}")
 
-        # 5. JVault Miner (TON)
-        jv_res = await connect_jvault(None, uid, name, jv_init, ton_addr)
-        if "connected" in jv_res.get("status"):
-            summary["jvault_connected"] += 1
-            print(f"   💎 JVault: 🟢 Connected TON: {str(ton_addr)[:10]}...")
-        else:
-            print(f"   💎 JVault: 🟡 {jv_res.get('status')}")
 
         # 6. Victor's Company (TON TonConnect)
         vic_init = t.get("victors_init_data")
@@ -571,15 +484,6 @@ async def main():
             print(f"   🏢 Victor's Company: 🟢 Connected TonConnect TON: {str(vic_res.get('address'))[:10]}...")
         else:
             print(f"   🏢 Victor's Company: 🟡 {vic_res.get('status')}")
-
-        # 7. AZM Miner (TON)
-        azm_init = t.get("azm_init_data") or t.get("azm") or t.get("azmir")
-        azm_res = await connect_azm(None, uid, name, azm_init, ton_addr)
-        if "connected" in azm_res.get("status"):
-            summary["azm_connected"] = summary.get("azm_connected", 0) + 1
-            print(f"   💎 AZM Miner: 🟢 Connected TON: {str(ton_addr)[:10]}...")
-        else:
-            print(f"   💎 AZM Miner: 🟡 {azm_res.get('status')}")
 
         # 8. Dillo Miner (TON TonConnect)
         dillo_init = t.get("dillo_init_data") or t.get("dillo")
@@ -594,15 +498,13 @@ async def main():
         time.sleep(0.2)
 
     print("\n" + "=" * 80)
-    print("💎 MULTI-CHAIN WALLET VERIFICATION SUMMARY (14-BOT INTEGRITY):")
+    print("💎 MULTI-CHAIN WALLET VERIFICATION SUMMARY (12-BOT INTEGRITY):")
     print("=" * 80)
     print(f"  • ⚡ MexoEarn (BEP20 EVM):       {summary['mexoearn_connected']}/{len(accs)} Connected")
     print(f"  • 🤖 AdxEarn AI (BEP20 EVM):      {summary['adxearn_ready']}/{len(accs)} Ready for Withdrawals")
     print(f"  • 🪙 ATF Miner (TON):             {summary['atf_verified']}/{len(accs)} Synced & Verified")
     print(f"  • 🔋 Lifetime Energy (TON):       {summary['lifetime_monitored']}/{len(accs)} Monitored for Auto-Payout")
-    print(f"  • 💎 JVault Miner (TON):          {summary['jvault_connected']}/{len(accs)} Active")
     print(f"  • 🏢 Victor's Company (TON):      {summary.get('victors_connected', 0)}/{len(accs)} Connected")
-    print(f"  • 💎 AZM Miner (TON):             {summary.get('azm_connected', 0)}/{len(accs)} Connected")
     print(f"  • ⛏️ Dillo Miner (TON):           {summary.get('dillo_connected', 0)}/{len(accs)} Connected")
     print("=" * 80)
 

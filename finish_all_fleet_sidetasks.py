@@ -2490,54 +2490,54 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         # 1. ATF Miner
         atf_res = await sweep_atf_tasks(session, uid, name, merged_toks.get("atf_init_data", ""), merged_toks)
         account_report["results"]["atf"] = atf_res
-        logger.info(f"[{name}] (1/15) 🪙 ATF Miner: {atf_res.get('tasks_claimed', 0)} claimed ({', '.join(atf_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (1/12) 🪙 ATF Miner: {atf_res.get('tasks_claimed', 0)} claimed ({', '.join(atf_res.get('notes', [])[:2]) or 'ok'})")
 
         # 2. Kynex Network
         kynex_res = await sweep_kynex_tasks(session, uid, name, merged_toks.get("kynex_init_data", ""), merged_toks)
         account_report["results"]["kynex"] = kynex_res
-        logger.info(f"[{name}] (2/15) 🌐 Kynex Network: {kynex_res.get('tasks_claimed', 0)} claimed ({', '.join(kynex_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (2/12) 🌐 Kynex Network: {kynex_res.get('tasks_claimed', 0)} claimed ({', '.join(kynex_res.get('notes', [])[:2]) or 'ok'})")
 
         # 3. PepeGram
         pepe_init = merged_toks.get("pepegram_init_data") or merged_toks.get("pepe_init_data", "")
         pepe_res = await sweep_pepegram_tasks(session, uid, name, pepe_init, merged_toks)
         account_report["results"]["pepegram"] = pepe_res
-        logger.info(f"[{name}] (3/15) 🐸 PepeGram: {pepe_res.get('tasks_claimed', 0)} claimed ({', '.join(pepe_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (3/12) 🐸 PepeGram: {pepe_res.get('tasks_claimed', 0)} claimed ({', '.join(pepe_res.get('notes', [])[:2]) or 'ok'})")
 
         # 4. AdxEarn AI
         adx_init = merged_toks.get("adxearn_init_data") or merged_toks.get("adx_init_data", "")
         adx_res = await sweep_adxearn_tasks(session, uid, name, adx_init, merged_toks)
         account_report["results"]["adxearn"] = adx_res
-        logger.info(f"[{name}] (4/15) 🤖 AdxEarn AI: {adx_res.get('tasks_claimed', 0)} claimed ({', '.join(adx_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (4/12) 🤖 AdxEarn AI: {adx_res.get('tasks_claimed', 0)} claimed ({', '.join(adx_res.get('notes', [])[:2]) or 'ok'})")
 
         # 5. Chicken Land
         chk_init = merged_toks.get("chickenland_init_data") or merged_toks.get("chicken_init_data", "")
         chicken_res = await sweep_chickenland_tasks(session, uid, name, chk_init, merged_toks)
         account_report["results"]["chickenland"] = chicken_res
-        logger.info(f"[{name}] (5/15) 🐔 Chicken Land: {chicken_res.get('tasks_claimed', 0)} claimed ({', '.join(chicken_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (5/12) 🐔 Chicken Land: {chicken_res.get('tasks_claimed', 0)} claimed ({', '.join(chicken_res.get('notes', [])[:2]) or 'ok'})")
 
         # 6. EarnVault
         ev_init = merged_toks.get("earnvault_init_data", "")
         ev_res = await sweep_earnvault_tasks(session, uid, name, ev_init, merged_toks)
         account_report["results"]["earnvault"] = ev_res
-        logger.info(f"[{name}] (6/15) 🏦 EarnVault: {ev_res.get('tasks_claimed', 0)} claimed ({', '.join(ev_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (6/12) 🏦 EarnVault: {ev_res.get('tasks_claimed', 0)} claimed ({', '.join(ev_res.get('notes', [])[:2]) or 'ok'})")
 
         # 7. MexoEarn
         mx_tok = merged_toks.get("mexo_token") or merged_toks.get("mexo_init_data", "")
         mexo_res = await sweep_mexoearn_tasks(session, uid, name, mx_tok, merged_toks)
         account_report["results"]["mexoearn"] = mexo_res
-        logger.info(f"[{name}] (7/15) ⚡ MexoEarn: {mexo_res.get('tasks_claimed', 0)} claimed ({', '.join(mexo_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (7/12) ⚡ MexoEarn: {mexo_res.get('tasks_claimed', 0)} claimed ({', '.join(mexo_res.get('notes', [])[:2]) or 'ok'})")
 
         # 8. MyAgeApp
         age_init = merged_toks.get("myage_init_data", "")
         age_res = await sweep_myage_tasks(session, uid, name, age_init, merged_toks)
         account_report["results"]["myage"] = age_res
-        logger.info(f"[{name}] (8/15) 🎂 MyAgeApp: {age_res.get('tasks_claimed', 0)} claimed ({', '.join(age_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (8/12) 🎂 MyAgeApp: {age_res.get('tasks_claimed', 0)} claimed ({', '.join(age_res.get('notes', [])[:2]) or 'ok'})")
 
         # 9. Lifetime Energy
         le_init = merged_toks.get("lifetime_energy_init_data") or merged_toks.get("lifetime_init_data", "")
         le_res = await sweep_lifetime_tasks(session, uid, name, le_init, merged_toks)
         account_report["results"]["lifetime"] = le_res
-        logger.info(f"[{name}] (9/15) 🔋 Lifetime Energy: {le_res.get('tasks_claimed', 0)} claimed ({', '.join(le_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (9/12) 🔋 Lifetime Energy: {le_res.get('tasks_claimed', 0)} claimed ({', '.join(le_res.get('notes', [])[:2]) or 'ok'})")
 
         # 10. Victor's Company
         vic_init = merged_toks.get("victors_init_data") or merged_toks.get("victors_company_init_data", "")
