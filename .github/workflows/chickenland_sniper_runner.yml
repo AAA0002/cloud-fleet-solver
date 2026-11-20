@@ -3,8 +3,8 @@ name: "Chicken Land 24/7 Cloud Promo Code Sniper (Dual-Engine)"
 on:
   workflow_dispatch:
   schedule:
-    # Safety keepalive runs every 6 hours (relay handoff handles normal continuation)
-    - cron: "0 */6 * * *"
+    # Safety keepalive runs every 2 hours (relay handoff handles normal continuation)
+    - cron: "0 */2 * * *"
 
 permissions:
   actions: write
@@ -35,26 +35,7 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Pre-Flight Supervisor Check (Deduplication Guard)
-        id: supervisor_check
-        env:
-          TURSO_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
-          TURSO_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
-          TURSO_DB_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
-          TURSO_DB_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
-          UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
-        run: |
-          if python3 chickenland_promo_sniper.py --check-active; then
-            echo "runner_active=true" >> "$GITHUB_OUTPUT"
-            echo "🟢 Another cloud sniper runner is already active and healthy. Exiting supervisor check cleanly."
-          else
-            echo "runner_active=false" >> "$GITHUB_OUTPUT"
-            echo "⚠️ No active runner detected. Starting continuous dual-engine sniper daemon..."
-          fi
-
       - name: Launch 24/7 Dual-Engine Sniper & Autonomous Compounder
-        if: steps.supervisor_check.outputs.runner_active != 'true'
         env:
           UPSTASH_URL: "${{ secrets.UPSTASH_URL || secrets.UPSTASH_REDIS_REST_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
           UPSTASH_TOKEN: "${{ secrets.UPSTASH_TOKEN || secrets.UPSTASH_REDIS_REST_TOKEN }}"
@@ -69,7 +50,7 @@ jobs:
         run: |
           # Runs dual MTProto push listener (0ms) + 2.5s HTTP poller + auto-compounding for 5.5h (19800s)
           # then cleanly triggers the next relay run and exits.
-          python3 chickenland_promo_sniper.py --watch --interval 2.5 --max-runtime 19800 --check-active-first
+          python3 chickenland_promo_sniper.py --watch --interval 2.5 --max-runtime 19800
 
       - name: Verify Zero-Secret Hygiene
         if: always()

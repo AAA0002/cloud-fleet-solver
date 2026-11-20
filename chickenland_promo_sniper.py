@@ -1562,6 +1562,11 @@ async def start_heartbeat_loop(max_runtime: float = 0.0):
                         redis_command("SET", "fleet:chickenland_sniper:heartbeat", json.dumps(handoff_hb), "EX", "30")
                     except Exception:
                         pass
+                if TURSO_TOKEN:
+                    try:
+                        turso_set("fleet:chickenland_sniper:heartbeat", handoff_hb)
+                    except Exception:
+                        pass
                 try:
                     import subprocess
                     p = subprocess.run(["gh", "workflow", "run", "chickenland_sniper_runner.yml"], capture_output=True, text=True, timeout=15)
@@ -1573,6 +1578,11 @@ async def start_heartbeat_loop(max_runtime: float = 0.0):
                 if UPSTASH_URL and UPSTASH_TOKEN:
                     try:
                         redis_command("DEL", "fleet:chickenland_sniper:heartbeat")
+                    except Exception:
+                        pass
+                if TURSO_TOKEN:
+                    try:
+                        turso_set("fleet:chickenland_sniper:heartbeat", {"status": "TERMINATED", "timestamp": 0})
                     except Exception:
                         pass
                 logger.info("[Sniper Relay] Clean baton handoff complete. Terminating current runner.")
