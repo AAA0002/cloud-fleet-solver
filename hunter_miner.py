@@ -261,9 +261,8 @@ class HunterClient:
         except Exception:
             pass
 
-        # Stable fingerprint based on account UID
-        import hashlib
-        visitor_hash = hashlib.sha256(f"hunter_device_fp_{self.uid}".encode()).hexdigest()[:32]
+        # Authentic fingerprint matching registered account device
+        visitor_hash = f"fp_{self.uid}_device"
 
         auth_payload = {
             "initData": self.raw_init_data,
@@ -406,16 +405,17 @@ def run_fleet_sweep():
         username = acc.get("username") or ""
         is_master = (uid == MASTER_UID)
 
-        # Look for hunter token
+        # Look for hunter token or cached 7-day JWT
         tok_data = tokens.get(uid, {})
         tok = tok_data.get("hunter_init_data") or tok_data.get("hunter") or tok_data.get("hunter_token")
+        jwt_tok = tok_data.get("hunter_jwt")
         
-        # If no dedicated hunter token yet, we'll mark and continue
-        if not tok:
+        # If neither dedicated hunter token nor JWT exists yet, mark and continue
+        if not tok and not jwt_tok:
             print(f"[{idx:02d}/{len(accounts)}] 👤 {name} ({uid}): 🟡 No Hunter Miner token (pending MTProto collector)")
             continue
 
-        client = HunterClient(uid, name, tok, username=username)
+        client = HunterClient(uid, name, tok or "", username=username, jwt_token=jwt_tok or "")
         ok = client.authenticate()
         if not ok:
             print(f"[{idx:02d}/{len(accounts)}] 👤 {name} ({uid}): ❌ Auth failed ({client.last_proxy_used or 'direct'})")
