@@ -13,7 +13,7 @@ Full Reverse-Engineered Automation Engine for Hunter Miner:
 - Mining Session: 12 hours (3 sessions/day limit)
 - Dynamic Tasks: Main, Partner, Community (+0.002 to +0.15 GRAM)
 - Automated Withdrawals: Instant on-chain GRAM cashout to TON Vault
-  Target: UQBPZiSvitdPU3VUyJK2mRaHVBl69xejw5aOrh1KfKA7gwDT (Min: 0.05 GRAM)
+  Target: UQBPZiSvitdPU3VUyJK2mRaHVBl69xejw5aOrh1KfKA7gwDT (Min: 0.50 GRAM)
 - Anti-Sybil IP Bypass: Cloudflare Edge Worker mesh proxy failover
 =============================================================================
 """
