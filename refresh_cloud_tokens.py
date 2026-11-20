@@ -122,9 +122,6 @@ MEXOEARN_REF = "6727787768"
 MYAGE_REF = "r6727787768"
 LIFETIME_REF = "6727787768"
 VICTORS_REF = "ref_9DB8C58014"
-AZM_BOT = "AZMIR_Miner_BOT"
-AZM_REF = "6727787768"
-AZM_APP_URL = os.getenv("AZM_APP_URL", "https://amd-dot-thin-resident.trycloudflare.com/")
 DILLO_BOT = "dillo_miner_bot"
 DILLO_REF = "6727787768"
 DILLO_APP_URL = "https://dillo-miner-bot.ih0st.app/#/"
@@ -464,14 +461,6 @@ async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, st
             return None
         try:
             p = urllib.parse.urlparse(str(url_str))
-            if "trycloudflare.com" in p.netloc and UPSTASH_URL and UPSTASH_TOKEN:
-                try:
-                    azm_base = f"{p.scheme}://{p.netloc}/api"
-                    s_req = urllib.request.Request(f"{UPSTASH_URL}/set/fleet:azm_api_base", data=azm_base.encode(), headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-                    with urllib.request.urlopen(s_req, timeout=3):
-                        pass
-                except Exception:
-                    pass
             frag_str = p.fragment
             if "?" in frag_str:
                 frag_str = frag_str.split("?", 1)[1]
@@ -882,18 +871,7 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
             print(f"  🏢 Victor's Company: Collected")
         await asyncio.sleep(0.5)
 
-        # 14. AZM Miner (@AZMIR_Miner_BOT)
-        azm_p = None if is_master else AZM_REF
-        azm_url = f"{AZM_APP_URL}?ref={AZM_REF}" if not is_master else AZM_APP_URL
-        azm_tok = await extract_bot_webapp_token(cl, AZM_BOT, start_param=azm_p, default_url=azm_url, candidate_short_names=["app"], prefer_direct_url=False)
-        if azm_tok:
-            tokens["azm_init_data"] = azm_tok
-            tokens["azm"] = azm_tok
-            tokens["azmir"] = azm_tok
-            print(f"  💎 AZM Miner: Collected")
-        await asyncio.sleep(0.5)
-
-        # 15. Dillo Miner (@dillo_miner_bot)
+        # 14. Dillo Miner (@dillo_miner_bot)
         dillo_p = None if is_master else DILLO_REF
         dillo_tok = await extract_bot_webapp_token(cl, DILLO_BOT, start_param=dillo_p, default_url=DILLO_APP_URL, candidate_short_names=["app"], prefer_direct_url=True)
         if dillo_tok:
