@@ -244,7 +244,6 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
             data.get("kynex_init_data"),
             data.get("chickenland_init_data"),
             data.get("cherry_init_data"),
-            data.get("azm_init_data"),
             data.get("dillo_init_data"),
             data.get("hunter_init_data")
         ]
@@ -287,7 +286,6 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
             "has_atf": bool(data.get("atf_init_data")),
             "has_victors": bool(data.get("victors_init_data")),
             "has_cherry": bool(data.get("cherry_init_data")),
-            "has_azm": bool(data.get("azm_init_data")),
             "has_dillo": bool(data.get("dillo_init_data")),
             "has_hunter": bool(data.get("hunter_init_data")),
             "name": data.get("name", "Unknown")
