@@ -100,8 +100,9 @@ OFFICIAL_USERNAMES: Set[str] = {
     "atfminers_bot", "atf_airdrop_bot", "kynex_miningbot", "pepe_gram_bot",
     "adxearnaibot", "adxearnai", "chickenlandbot", "earnvaultapp_bot", "earnvaulte", "mexoearni_bot",
     "myageapp", "appmyage", "lifetime_energy_bot", "cherryplaybot",
-    "victors_company_bot", "azmir_miner_bot", "azmir_channel", "azmir_chat", "azmir_group", "web3primeteam", "solanamemes001",
+    "victors_company_bot", "web3primeteam", "solanamemes001",
     "dillo_miner_bot", "dillotonlive",
+    "gramhtrsbot", "gramhtrs", "rootofhunter",
     # Official Communities & Channels
     "aaaautominer", "aaaautomining", "aaa_activity", "rootofhunter_top",
     "androforever_oficial", "theboss_victor", "victors_company", "vicwithdrawals",
