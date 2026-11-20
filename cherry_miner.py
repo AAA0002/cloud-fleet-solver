@@ -182,13 +182,22 @@ class CherryClient:
         self.tickets = int(user.get("tickets", 0) or 0)
         self.today_earned = float(user.get("today", 0) or 0)
         self.total_earned = float(user.get("total_earned", 0) or 0)
-        
-        streak = res.get("streak", {})
-        self.streak_day = int(streak.get("day", 0) or 0)
 
-        friends = res.get("friends", {})
-        self.referrals_count = int(friends.get("count", 0) or len(friends.get("list", [])))
-        self.ref_code = user.get("ref_code") or friends.get("code") or ""
+        streak = user.get("streak") or res.get("streak") or {}
+        if isinstance(streak, dict):
+            self.streak_day = int(streak.get("count", 0) or streak.get("day", 0) or 0)
+        else:
+            self.streak_day = 0
+
+        friends = res.get("friends", [])
+        if isinstance(friends, list):
+            self.referrals_count = len(friends)
+        elif isinstance(friends, dict):
+            self.referrals_count = int(friends.get("count", 0) or len(friends.get("list", [])))
+        else:
+            self.referrals_count = int(user.get("ref_count", 0) or 0)
+
+        self.ref_code = user.get("ref_code") or (friends.get("code") if isinstance(friends, dict) else "") or ""
         return res
 
     async def complete_onboarding(self, session: aiohttp.ClientSession) -> bool:
@@ -292,25 +301,34 @@ class CherryClient:
                 report["actions"].append("Onboarded ✅")
 
         # 3. Daily check-in streak
-        streak = b_data.get("streak", {})
-        if streak.get("can_claim"):
+        streak = user.get("streak") or b_data.get("streak") or {}
+        if isinstance(streak, dict) and (streak.get("can_claim") or streak.get("claimed") is False):
             s_res = await self.claim_streak(session)
             if s_res and not s_res.get("error"):
                 rew = s_res.get("reward", 0)
                 report["actions"].append(f"Streak Day {s_res.get('day', self.streak_day)} (+{rew} 🍒)")
                 self.balance = float(s_res.get("balance", self.balance) or self.balance)
 
-        # 4. Free Spin
-        user = b_data.get("user", {})
-        if user.get("free_spins", 0) > 0 or user.get("spins", 0) > 0:
+        # 4. Free Spin (All available spins)
+        spins = int(user.get("spins_left", 0) or user.get("free_spins", 0) or user.get("spins", 0) or 0)
+        while spins > 0:
             sp_res = await self.claim_spin(session)
             if sp_res and not sp_res.get("error"):
-                p_text = sp_res.get("prize", {}).get("text", "Prizes")
+                pz = sp_res.get("prize")
+                p_text = pz.get("text") if isinstance(pz, dict) else f"+{pz} 🍒"
                 report["actions"].append(f"Spin Won: {p_text} 🎡")
+                spins = int(sp_res.get("spins_left", spins - 1))
+                await asyncio.sleep(0.5)
+            else:
+                break
 
         # 5. Sweep referral commissions
-        friends = b_data.get("friends", {})
-        if float(friends.get("unearned_commission", 0) or 0) > 0:
+        ref_earned = float(user.get("ref_pending", 0) or user.get("ref_earned", 0) or 0)
+        friends = b_data.get("friends", [])
+        unearned = 0
+        if isinstance(friends, dict):
+            unearned = float(friends.get("unearned_commission", 0) or 0)
+        if ref_earned > 0 or unearned > 0:
             f_res = await self.claim_referrals(session)
             if f_res and not f_res.get("error"):
                 c_amt = f_res.get("claimed", 0)
@@ -325,7 +343,7 @@ class CherryClient:
 
         # 7. Bind TON wallet if not yet bound
         wallets = user.get("wallets", {})
-        if not wallets.get("ton") and self.ton_wallet:
+        if isinstance(wallets, dict) and not wallets.get("ton") and self.ton_wallet:
             w_res = await self.bind_ton_wallet(session, self.ton_wallet)
             if w_res and not w_res.get("error"):
                 report["actions"].append(f"Bound TON Wallet {self.ton_wallet[:6]}... ✅")
