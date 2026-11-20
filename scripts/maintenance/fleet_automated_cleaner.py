@@ -21,7 +21,7 @@ and leftover third-party sponsor channels across all fleet accounts:
    - Purges orphaned lock keys (lock:* or fleet:lock:*)
 
 3. Telegram Ephemeral Dialog & Sponsor Purger (Rule 8 & 11):
-   - Strict whitelisting: NEVER deletes official fleet/admin channels or active 14 bots
+   - Strict whitelisting: NEVER deletes official fleet/admin channels or active 13 bots
    - Detects and leaves all non-whitelisted sponsor channels joined during tasks
    - Revokes and purges dialogs for defunct/promo bots (e.g. Gram Master, Grouche, etc.)
    - Keeps the user's Telegram chat list 100% clean and pristine
@@ -96,7 +96,7 @@ OFFICIAL_USERNAMES: Set[str] = {
     # System & Admin Bots
     "myagyai", "my_router_ai_bot", "aaapremiumappsbot", "aaagmailbot", "aaa_instant_mail_bot",
     "botfather", "spambot", "stickers", "telegram",
-    # Active 14 Legitimate Mining Bots & Official Channels
+    # Active 13 Legitimate Mining Bots & Official Channels
     "atfminers_bot", "atf_airdrop_bot", "kynex_miningbot", "pepe_gram_bot",
     "adxearnaibot", "adxearnai", "chickenlandbot", "earnvaultapp_bot", "earnvaulte", "mexoearni_bot",
     "myageapp", "appmyage", "lifetime_energy_bot", "cherryplaybot",
@@ -250,9 +250,12 @@ def clean_redis(dry_run: bool = False) -> Dict[str, Any]:
     def redis_req(method: str, endpoint: str, data: Any = None) -> Any:
         url = f"{UPSTASH_URL}/{endpoint}"
         h = {"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"}
-        req = urllib.request.Request(url, data=json.dumps(data).encode() if data else None, headers=h, method=method)
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.loads(r.read().decode())
+        try:
+            req = urllib.request.Request(url, data=json.dumps(data).encode() if data else None, headers=h, method=method)
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read().decode())
+        except Exception as e:
+            return {"error": str(e), "result": []}
 
     try:
         # 1. Delete standalone leftover test keys
