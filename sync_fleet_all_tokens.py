@@ -51,7 +51,6 @@ TARGET_BOTS = [
     "lifetime",
     "cherry",
     "victors",
-    "azm",
     "dillo"
 ]
 
@@ -73,10 +72,6 @@ TOKEN_KEYS = [
     "cherry_device_id",
     "victors_init_data",
     "victors_human_pass",
-    "azm_init_data",
-    "azm",
-    "azmir_init_data",
-    "azmir",
     "dillo_init_data",
     "dillo",
     # Aliases
@@ -321,11 +316,6 @@ def main():
             merged_tokens["lifetime_init_data"] = merged_tokens["lifetime_energy_init_data"]
         elif merged_tokens.get("lifetime_init_data") and not merged_tokens.get("lifetime_energy_init_data"):
             merged_tokens["lifetime_energy_init_data"] = merged_tokens["lifetime_init_data"]
-
-        if merged_tokens.get("azm_init_data") and not merged_tokens.get("azm"):
-            merged_tokens["azm"] = merged_tokens["azm_init_data"]
-        elif merged_tokens.get("azm") and not merged_tokens.get("azm_init_data"):
-            merged_tokens["azm_init_data"] = merged_tokens["azm"]
 
         if merged_tokens.get("dillo_init_data") and not merged_tokens.get("dillo"):
             merged_tokens["dillo"] = merged_tokens["dillo_init_data"]
