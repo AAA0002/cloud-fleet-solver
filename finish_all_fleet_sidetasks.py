@@ -830,12 +830,10 @@ async def sweep_pepegram_tasks(session: aiohttp.ClientSession, uid: str, name: s
                 res["notes"].append("mine_tapped")
 
         # 4. Production Start (6-Hour Mining Session & Referral Power Activation)
-        now_ts = int(time.time())
-        if now_ts >= ends_at:
-            await jitter(0.4, 0.8)
-            async with session.post(f"{pepe_base}/start-production?tid=1449", json={"initData": p_init, "tid": 1449}, headers=pepe_headers) as spr:
-                if spr.status in (200, 201):
-                    res["notes"].append("production_started")
+        await jitter(0.4, 0.8)
+        async with session.post(f"{pepe_base}/start-production?tid=1449", json={"initData": p_init, "tid": 1449}, headers=pepe_headers) as spr:
+            if spr.status in (200, 201):
+                res["notes"].append("production_started")
 
         # 5. Free Power Boosts (Ad rolls & Slot spins)
         await jitter(0.3, 0.6)
@@ -868,8 +866,8 @@ async def sweep_pepegram_tasks(session: aiohttp.ClientSession, uid: str, name: s
                                 res["tasks_claimed"] += 1
                                 res["notes"].append(f"task_{tk_id}")
 
-        # Auto-withdraw for ANY fleet account when hashes reach 1,000 PEPE threshold
-        if res.get("balance", 0) >= 1000:
+        # Auto-withdraw for ANY fleet account when hashes reach 2,000,000 PEPE threshold (10 TON minimum)
+        if res.get("balance", 0) >= 2000000.0:
             try:
                 wd_payload = {
                     "initData": p_init,
@@ -2037,8 +2035,8 @@ async def sweep_lifetime_tasks(session: aiohttp.ClientSession, uid: str, name: s
                 except Exception:
                     pass
 
-        # Auto-withdraw for ANY fleet account reaching 1,000 hashes threshold
-        if res.get("balance", 0) >= 1000:
+        # Auto-withdraw for ANY fleet account reaching 500 hashes threshold
+        if res.get("balance", 0) >= 500.0:
             try:
                 wd_payload = {
                     "initData": init_data,
@@ -2650,9 +2648,9 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         cherry_init = merged_toks.get("cherry_init_data") or merged_toks.get("cherry", "")
         cherry_res = await sweep_cherry_tasks(session, uid, name, cherry_init, merged_toks)
         account_report["results"]["cherry"] = cherry_res
-        logger.info(f"[{name}] (10/14) 🍒 Cherry Play: {cherry_res.get('tasks_claimed', 0)} claimed ({', '.join(cherry_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (10/13) 🍒 Cherry Play: {cherry_res.get('tasks_claimed', 0)} claimed ({', '.join(cherry_res.get('notes', [])[:2]) or 'ok'})")
 
-        # 12. Victor's Company
+        # 11. Victor's Company
         vic_init = merged_toks.get("victors_init_data") or merged_toks.get("victors_company_init_data", "")
         vic_res = await sweep_victors_tasks(session, uid, name, vic_init, merged_toks)
         account_report["results"]["victors"] = vic_res
@@ -2709,7 +2707,7 @@ async def main():
                 pass
 
     logger.info("=============================================================================")
-    logger.info(f"🎯 STARTING COMPLETE 15-BOT FLEET SIDE-TASK HARVEST ({len(target_accounts)} ACCOUNTS)")
+    logger.info(f"🎯 STARTING COMPLETE 13-BOT FLEET SIDE-TASK HARVEST ({len(target_accounts)} ACCOUNTS)")
     logger.info("=============================================================================")
 
     conn = aiohttp.TCPConnector(limit=25, ttl_dns_cache=300)
@@ -2725,7 +2723,7 @@ async def main():
 
         # Print Summary
         logger.info("\n" + "=" * 80)
-        logger.info(f"📊 15-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(target_accounts)} ACCOUNTS)")
+        logger.info(f"📊 13-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(target_accounts)} ACCOUNTS)")
         logger.info("=" * 80)
         total_tasks = 0
         for rep in reports:
