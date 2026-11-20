@@ -40,6 +40,8 @@ except ImportError:
 
 UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("UPSTASH_URL", "")
 UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_TOKEN", "")
+TURSO_URL = os.getenv("TURSO_URL") or os.getenv("TURSO_DB_URL", "libsql://aaa-fleet-db-aaa0002.turso.io")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN") or os.getenv("TURSO_DB_TOKEN", "")
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_NOTIFICATION_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
@@ -47,6 +49,44 @@ DEFAULT_RENDER_URL = os.getenv("STANDBY_NODE_URL", "")
 
 # Maximum allowable token age before triggering cloud auto-heal (hours)
 MAX_TOKEN_AGE_HOURS = 16.0
+
+
+def turso_execute(sql: str, args: list = None):
+    """Synchronous Turso LibSQL pipeline execution."""
+    if not TURSO_TOKEN:
+        return None
+    endpoint = TURSO_URL.rstrip("/").replace("libsql://", "https://") + "/v2/pipeline"
+    headers = {"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}
+    formatted_args = []
+    if args:
+        for a in args:
+            if isinstance(a, int):
+                formatted_args.append({"type": "integer", "value": str(a)})
+            else:
+                formatted_args.append({"type": "text", "value": str(a)})
+    req_body = {
+        "requests": [
+            {"type": "execute", "stmt": {"sql": sql, "args": formatted_args}}
+        ]
+    }
+    try:
+        req = urllib.request.Request(endpoint, data=json.dumps(req_body).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("results", [])
+            if results and results[0].get("type") == "ok":
+                rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                return [[c.get("value") for c in r] for r in rows]
+    except Exception:
+        pass
+    return None
+
+
+def turso_get(key: str):
+    rows = turso_execute("SELECT val FROM kv_mesh WHERE key = ? LIMIT 1", [key])
+    if rows and len(rows) > 0 and len(rows[0]) > 0:
+        return rows[0][0]
+    return None
 
 
 def robust_json_loads(val, default=None):
@@ -152,7 +192,7 @@ def get_active_render_node() -> str:
 
 
 def load_accounts() -> List[Dict[str, Any]]:
-    """Load accounts from local accounts.json, Cloudflare backup.zip, or Upstash Redis."""
+    """Load accounts from local accounts.json, Turso LibSQL SSOT, Cloudflare backup.zip, or Upstash Redis."""
     acc_path = os.path.join(BASE_DIR, "accounts.json")
     if os.path.exists(acc_path):
         try:
@@ -160,6 +200,16 @@ def load_accounts() -> List[Dict[str, Any]]:
                 return json.load(f)
         except Exception:
             pass
+
+    # Cloud fallback 1: Turso LibSQL SSOT (25M ops/mo, 100% free)
+    try:
+        t_accs = turso_get("fleet:accounts")
+        if t_accs:
+            parsed = robust_json_loads(t_accs)
+            if isinstance(parsed, list) and parsed:
+                return parsed
+    except Exception:
+        pass
 
     # Cloud fallback 1: Cloudflare Edge mesh backup.zip (runs on ephemeral cloud runners)
     ssl_ctx = ssl._create_unverified_context()
@@ -221,19 +271,48 @@ def load_accounts() -> List[Dict[str, Any]]:
 
 
 def inspect_account_tokens(uid: str) -> Dict[str, Any]:
-    """Retrieve and inspect token age for a specific account UID."""
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return {"status": "ERROR_NO_REDIS", "age_hours": 999.0}
+    """Retrieve and inspect token age for a specific account UID with multi-cloud failover."""
+    data = None
+
+    # 1. Primary: Upstash Redis (if available and within quota)
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
+            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=5)
+            if r.status_code == 200 and r.json().get("result"):
+                raw = r.json().get("result")
+                parsed = robust_json_loads(raw)
+                if isinstance(parsed, dict) and parsed:
+                    data = parsed
+        except Exception:
+            pass
+
+    # 2. Secondary: Turso LibSQL SSOT (25M ops/mo, 100% free, zero quota limits)
+    if not data or not isinstance(data, dict):
+        try:
+            t_raw = turso_get(f"fleet:tokens:{uid}")
+            if t_raw:
+                parsed = robust_json_loads(t_raw)
+                if isinstance(parsed, dict) and parsed:
+                    data = parsed
+        except Exception:
+            pass
+
+    # 3. Tertiary: Local fleet_miniapp_tokens.json fallback
+    if not data or not isinstance(data, dict):
+        fpath = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    local_tokens = json.load(f)
+                    data = local_tokens.get(str(uid)) or local_tokens.get(int(uid))
+            except Exception:
+                pass
+
+    if not data or not isinstance(data, dict):
+        return {"status": "MISSING_KEY", "age_hours": 999.0}
 
     try:
-        url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
-        r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
-        if r.status_code != 200 or not r.json().get("result"):
-            return {"status": "MISSING_KEY", "age_hours": 999.0}
-
-        raw = r.json().get("result")
-        data = robust_json_loads(raw)
-
         now = time.time()
         synced_at = data.get("synced_at") or data.get("updated_at") or 0
 
