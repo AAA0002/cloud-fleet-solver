@@ -1173,31 +1173,59 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
                     res["notes"].append(f"eggs_sold_{eggs}")
                 current_coins = float(sell_res.get("result", {}).get("user", {}).get("coins", current_coins))
 
-        # 6. Tasks (Dynamic task discovery across main, daily, and custom partner tasks)
+        # 6. Tasks (Dynamic task discovery across main, daily, custom and sponsored tasks)
         completed_tasks = set((u_info.get("tasks") or []) + (u_info.get("dayTasks") or []))
-        tasks_to_check = ["channel", "payments", "chat", "x", "dnews", "dpay", "dpromo", "c6"]
+        tasks_to_check = ["channel", "payments", "chat", "x", "dnews", "dpay", "dpromo", "dreinvest", "dname", "c6"]
+        partner_items = []
         try:
             tasks_cfg_resp = await rpc("/api/tasks")
             if tasks_cfg_resp.get("ok"):
-                custom_tasks = tasks_cfg_resp.get("result", {}).get("custom", [])
+                t_result = tasks_cfg_resp.get("result", {})
+                custom_tasks = t_result.get("custom", [])
                 for ct in custom_tasks:
                     if isinstance(ct, dict) and ct.get("id"):
                         cid = str(ct["id"])
                         if cid not in tasks_to_check:
                             tasks_to_check.append(cid)
+                
+                # Check deposit task (dbuy -> +500 coins)
+                day_info = t_result.get("day", {})
+                if day_info.get("bought") and "dbuy" not in completed_tasks:
+                    tasks_to_check.append("dbuy")
+
+                # Check sponsored tasks (Zero verification required)
+                partner_cfg = t_result.get("partner", {})
+                if not partner_cfg.get("lock"):
+                    partner_items = partner_cfg.get("items", [])
         except Exception:
             pass
 
         for tid in tasks_to_check:
             if tid not in completed_tasks:
-                await rpc("/api/task/open", {"id": tid})
-                await asyncio.sleep(0.5)
+                if tid != "dbuy":
+                    await rpc("/api/task/open", {"id": tid})
+                    await asyncio.sleep(0.5)
                 t_claim = await rpc("/api/task", {"id": tid})
                 if t_claim.get("ok"):
                     res["tasks_claimed"] += 1
                     res["notes"].append(f"task_{tid}")
                     if t_claim.get("result", {}).get("user"):
                         current_coins = float(t_claim["result"]["user"].get("coins", current_coins))
+
+        # Sweep sponsored tasks: open -> wait -> claim (Zero channel/bot join required)
+        if partner_items:
+            for pit in partner_items:
+                await rpc("/api/partner/open", {"id": pit.get("id")})
+            max_w = max([pit.get("wait", 5) for pit in partner_items] or [5])
+            await asyncio.sleep(max_w + 1)
+            for pit in partner_items:
+                p_claim = await rpc("/api/partner/claim", {"id": pit.get("id")})
+                if p_claim.get("ok"):
+                    res["tasks_claimed"] += 1
+                    p_c = p_claim.get("result", {}).get("coins", pit.get("coins", 0))
+                    res["notes"].append(f"sponsored_{pit.get('id')}_+{p_c}")
+                    if p_claim.get("result", {}).get("user"):
+                        current_coins = float(p_claim["result"]["user"].get("coins", current_coins))
 
         # 6.5. Autonomous Promo Code Discovery & Redemption (@ChickenLandCodes)
         try:

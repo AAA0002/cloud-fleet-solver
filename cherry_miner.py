@@ -86,13 +86,42 @@ def generate_device_id(uid: str) -> str:
     """Generates a stable 36-char hex device ID per account to comply with server X-Device header."""
     return hashlib.sha256(f"cherry_dev_{uid}".encode()).hexdigest()[:36]
 
+CACHED_WEBSHARE_PROXIES: List[str] = []
+
+def get_cherry_proxy_pool() -> List[str]:
+    """Fetches verified rotating residential/datacenter proxies from active Webshare keys (Key 2 and Key 7)."""
+    global CACHED_WEBSHARE_PROXIES
+    if CACHED_WEBSHARE_PROXIES:
+        return CACHED_WEBSHARE_PROXIES
+    proxies = []
+    for k_name in ("WEBSHARE_KEY_2", "WEBSHARE_KEY_7"):
+        k = os.getenv(k_name)
+        if not k:
+            continue
+        try:
+            req = urllib.request.Request(
+                "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=10",
+                headers={"Authorization": f"Token {k}"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                res = json.loads(r.read().decode()).get("results", [])
+                for p in res:
+                    u = f"http://{p['username']}:{p['password']}@{p['proxy_address']}:{p['port']}"
+                    if u not in proxies:
+                        proxies.append(u)
+        except Exception:
+            pass
+    CACHED_WEBSHARE_PROXIES = proxies
+    return proxies
+
 
 class CherryClient:
-    def __init__(self, uid: str, name: str, init_data: str, ton_wallet: str = MASTER_TON_VAULT):
-        self.uid = str(uid)
-        self.name = name
-        self.init_data = init_data
-        self.ton_wallet = ton_wallet
+    def __init__(self, uid: Optional[str] = None, name: Optional[str] = None, init_data: Optional[str] = None, ton_wallet: str = MASTER_TON_VAULT, proxy: Optional[str] = None, **kwargs):
+        self.uid = str(uid or kwargs.get("user_id") or kwargs.get("uid") or "")
+        self.name = name or kwargs.get("name") or f"Account {self.uid}"
+        self.init_data = init_data or kwargs.get("init_data") or ""
+        self.ton_wallet = ton_wallet or kwargs.get("ton_wallet") or MASTER_TON_VAULT
+        self.proxy = proxy or kwargs.get("proxy")
         self.device_id = generate_device_id(self.uid)
         self.balance = 0
         self.tickets = 0
@@ -119,7 +148,7 @@ class CherryClient:
         try:
             if body is not None or method == "POST":
                 payload = json.dumps(body if body is not None else {})
-                async with session.post(url, data=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.post(url, data=payload, headers=headers, proxy=self.proxy, timeout=aiohttp.ClientTimeout(total=12)) as resp:
                     if resp.status in [200, 201]:
                         return await resp.json()
                     elif resp.status == 401:
@@ -130,7 +159,7 @@ class CherryClient:
                         txt = await resp.text()
                         return {"error": f"http_{resp.status}", "detail": txt[:200], "status": resp.status}
             else:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.get(url, headers=headers, proxy=self.proxy, timeout=aiohttp.ClientTimeout(total=12)) as resp:
                     if resp.status in [200, 201]:
                         return await resp.json()
                     elif resp.status == 401:
@@ -144,9 +173,33 @@ class CherryClient:
             return await self._call_proxy(session, path, body, method, headers)
 
     async def _call_proxy(self, session: aiohttp.ClientSession, path: str, body: Optional[Dict[str, Any]], method: str, headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
-        """Rotates request across Cloudflare Edge proxy nodes when IP-gated."""
+        """Rotates request across active Webshare proxies and Cloudflare Edge nodes when IP-gated."""
+        # 1. Try active Webshare residential/datacenter proxies
+        pool = get_cherry_proxy_pool()
+        if pool:
+            start_p = (int(self.uid) if self.uid.isdigit() else 0) % len(pool)
+            ordered_pool = pool[start_p:] + pool[:start_p]
+            for p_cand in ordered_pool[:3]:
+                if p_cand == self.proxy:
+                    continue
+                try:
+                    p_data = json.dumps(body if body is not None else {}) if (body is not None or method == "POST") else None
+                    if p_data:
+                        async with session.post(f"{API_BASE}{path}", data=p_data, headers=headers, proxy=p_cand, timeout=aiohttp.ClientTimeout(total=10)) as resp_p:
+                            if resp_p.status in [200, 201]:
+                                self.proxy = p_cand
+                                return await resp_p.json()
+                    else:
+                        async with session.get(f"{API_BASE}{path}", headers=headers, proxy=p_cand, timeout=aiohttp.ClientTimeout(total=10)) as resp_p:
+                            if resp_p.status in [200, 201]:
+                                self.proxy = p_cand
+                                return await resp_p.json()
+                except Exception:
+                    continue
+
+        # 2. Try Cloudflare Edge proxy nodes
         if not CF_PROXY_NODES:
-            return {"error": "http_423", "detail": "IP rate limit, no proxy configured", "status": 423}
+            return {"error": "http_423", "detail": "IP rate limit, all proxies attempted", "status": 423}
         start_idx = (int(self.uid) if self.uid.isdigit() else 0) % len(CF_PROXY_NODES)
         ordered_proxies = CF_PROXY_NODES[start_idx:] + CF_PROXY_NODES[:start_idx]
         for p_url in ordered_proxies:
@@ -169,7 +222,7 @@ class CherryClient:
                             return p_d.get("data")
             except Exception:
                 continue
-        return {"error": "http_423", "detail": "All Cloudflare proxy nodes attempted", "status": 423}
+        return {"error": "http_423", "detail": "All proxy nodes attempted", "status": 423}
 
     async def bootstrap(self, session: aiohttp.ClientSession) -> Optional[Dict[str, Any]]:
         """Fetch full user state, tasks, streak, friends from /bootstrap."""
@@ -425,8 +478,14 @@ class CherryClient:
 
         return claimed
 
-    async def run_full_farming_cycle(self, session: aiohttp.ClientSession) -> Dict[str, Any]:
+    async def run_full_farming_cycle(self, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
         """Executes the complete Cherry Play harvest cycle for this account."""
+        if session is None:
+            async with aiohttp.ClientSession() as s:
+                return await self._run_farming_cycle_impl(s)
+        return await self._run_farming_cycle_impl(session)
+
+    async def _run_farming_cycle_impl(self, session: aiohttp.ClientSession) -> Dict[str, Any]:
         report = {
             "uid": self.uid,
             "name": self.name,
@@ -530,6 +589,18 @@ class CherryClient:
             if w_res and not w_res.get("error"):
                 report["actions"].append(f"Bound TON Wallet {self.ton_wallet[:6]}... ✅")
 
+        # 10. Automated on-chain withdrawal if balance >= min_withdraw (8,000 🍒 = $0.08 USD)
+        cfg = b_data.get("config", {})
+        min_w = float(cfg.get("min_withdraw", 8000) or 8000)
+        withdraw_on = cfg.get("withdraw_on", True)
+        if withdraw_on and self.balance >= min_w:
+            w_res = await self.execute_withdrawal(session, method="usdt_ton")
+            if w_res.get("success"):
+                report["actions"].append(f"Withdrawn {w_res.get('amount')} 🍒 (${w_res.get('usd')} USD) to {w_res.get('address', '')[:8]}... 💰")
+                report["withdrawal"] = w_res
+            else:
+                report["actions"].append(f"Withdrawal notice: {w_res.get('error')}")
+
         report["balance"] = self.balance
         report["streak"] = self.streak_day
         report["tasks_harvested"] = len(claimed_tasks) if 'claimed_tasks' in locals() else 0
@@ -615,6 +686,7 @@ async def harvest_all_cherry_fleet():
 
     total_cherries = 0.0
     active_count = 0
+    proxy_pool = get_cherry_proxy_pool()
 
     async with aiohttp.ClientSession() as session:
         for idx, acc in enumerate(accs):
@@ -640,7 +712,8 @@ async def harvest_all_cherry_fleet():
                 print(f"[{idx+1}/{len(accs)}] 🍒 [{name}] Token missing — awaiting cloud token refresher")
                 continue
 
-            client = CherryClient(uid=uid, name=name, init_data=init_data, ton_wallet=ton_addr)
+            assigned_proxy = proxy_pool[idx % len(proxy_pool)] if proxy_pool else None
+            client = CherryClient(uid=uid, name=name, init_data=init_data, ton_wallet=ton_addr, proxy=assigned_proxy)
             res = await client.run_full_farming_cycle(session)
             bal = res.get("balance", 0)
             total_cherries += bal

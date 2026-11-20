@@ -278,7 +278,7 @@ class ChickenLandMiner:
                 if r.get("ok"):
                     claimed.append(tid)
                     
-        # 2. Daily tasks (including hidden dreinvest +100 coins and dname +100 coins)
+        # 2. Daily tasks (including deposit task dbuy +500 coins, dreinvest +100 coins and dname +100 coins)
         day_tasks = ["dnews", "dpay", "dpromo", "dreinvest", "dname"]
         for tid in day_tasks:
             if tid not in completed_day:
@@ -287,8 +287,15 @@ class ChickenLandMiner:
                 r = self.rpc("/api/task", {"id": tid})
                 if r.get("ok"):
                     claimed.append(tid)
+
+        # Claim deposit task (Make a purchase today / top up -> +500 coins) if eligible
+        day_info = res.get("day", {})
+        if day_info.get("bought") and "dbuy" not in completed_day:
+            r_buy = self.rpc("/api/task", {"id": "dbuy"})
+            if r_buy.get("ok"):
+                claimed.append("dbuy (+500 coins)")
                     
-        # 3. Custom/partner tasks
+        # 3. Custom tasks
         custom = res.get("custom", [])
         for c in custom:
             cid = c.get("id")
@@ -298,6 +305,21 @@ class ChickenLandMiner:
                 r = self.rpc("/api/task", {"id": cid})
                 if r.get("ok"):
                     claimed.append(cid)
+
+        # 4. Sponsored Tasks (Zero verification: Tap open -> wait timer -> claim without joining channels/bots)
+        partner = res.get("partner", {})
+        if not partner.get("lock"):
+            p_items = partner.get("items", [])
+            if p_items:
+                for pit in p_items:
+                    self.rpc("/api/partner/open", {"id": pit.get("id")})
+                max_w = max([pit.get("wait", 5) for pit in p_items] or [5])
+                time.sleep(max_w + 2)
+                for pit in p_items:
+                    r_p = self.rpc("/api/partner/claim", {"id": pit.get("id")})
+                    if r_p.get("ok"):
+                        rew = r_p.get("result", {}).get("coins", pit.get("coins", 0))
+                        claimed.append(f"{pit.get('title', 'sponsored')} (+{rew} coins)")
                     
         return {"claimed": claimed}
 

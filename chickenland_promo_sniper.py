@@ -454,16 +454,6 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
     fleet = {}
     names = {}
     accounts_list = []
-    if os.path.exists(accs_path):
-        try:
-            with open(accs_path, "r", encoding="utf-8") as f:
-                accounts_list = json.load(f)
-                for acc in accounts_list:
-                    uid = str(acc.get("user_id", ""))
-                    if uid:
-                        names[uid] = acc.get("name", f"Account {uid}")
-        except Exception:
-            pass
 
     def update_token(uid: str, tok: str):
         if not tok or not uid:
@@ -486,6 +476,63 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
             if ad > fleet[uid].get("auth_date", 0):
                 fleet[uid]["b64_token"] = b64
                 fleet[uid]["auth_date"] = ad
+
+    if os.path.exists(accs_path):
+        try:
+            with open(accs_path, "r", encoding="utf-8") as f:
+                accounts_list = json.load(f)
+                for acc in accounts_list:
+                    uid = str(acc.get("user_id", ""))
+                    if uid:
+                        names[uid] = acc.get("name", f"Account {uid}")
+        except Exception:
+            pass
+
+    # Headless cloud runner fallback: load accounts and embedded tokens directly from Turso LibSQL
+    if not accounts_list and TURSO_TOKEN:
+        try:
+            for ak in ("fleet:accounts", "fleet:live_state"):
+                raw_accs = turso_get(ak)
+                if raw_accs:
+                    t_accs = json.loads(raw_accs) if isinstance(raw_accs, str) else raw_accs
+                    while isinstance(t_accs, str):
+                        t_accs = json.loads(t_accs)
+                    if isinstance(t_accs, dict) and "accounts" in t_accs:
+                        t_accs = t_accs["accounts"]
+                    if isinstance(t_accs, list) and t_accs:
+                        accounts_list = t_accs
+                        for acc in accounts_list:
+                            uid = str(acc.get("user_id") or acc.get("id") or "")
+                            if uid:
+                                names[uid] = acc.get("name", f"Account {uid}")
+                            tok = acc.get("chickenland_init_data") or acc.get("chicken_init_data")
+                            if tok:
+                                update_token(uid, tok)
+                        if accounts_list:
+                            break
+        except Exception:
+            pass
+
+    if not accounts_list and UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            raw_accs = redis_command("GET", "fleet:accounts")
+            if raw_accs:
+                t_accs = json.loads(raw_accs) if isinstance(raw_accs, str) else raw_accs
+                while isinstance(t_accs, str):
+                    t_accs = json.loads(t_accs)
+                if isinstance(t_accs, dict) and "accounts" in t_accs:
+                    t_accs = t_accs["accounts"]
+                if isinstance(t_accs, list) and t_accs:
+                    accounts_list = t_accs
+                    for acc in accounts_list:
+                        uid = str(acc.get("user_id") or acc.get("id") or "")
+                        if uid:
+                            names[uid] = acc.get("name", f"Account {uid}")
+                        tok = acc.get("chickenland_init_data") or acc.get("chicken_init_data")
+                        if tok:
+                            update_token(uid, tok)
+        except Exception:
+            pass
 
     # 0. Turso LibSQL Mesh SSOT (Zero rate limits, 25M ops/mo)
     for turso_k in ("fleet:tokens_state", "miniapp_tokens"):
@@ -633,6 +680,34 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
 
     CACHED_FLEET_TOKENS = fleet
     return fleet
+
+GLOBAL_WARM_SESSION: Optional[aiohttp.ClientSession] = None
+
+async def get_warm_session() -> aiohttp.ClientSession:
+    """Returns persistent, pre-warmed aiohttp.ClientSession with active TCP keep-alive and DNS cache."""
+    global GLOBAL_WARM_SESSION
+    if GLOBAL_WARM_SESSION is None or GLOBAL_WARM_SESSION.closed:
+        connector = aiohttp.TCPConnector(
+            limit=100,
+            keepalive_timeout=120,
+            ttl_dns_cache=3600,
+            enable_cleanup_closed=True
+        )
+        GLOBAL_WARM_SESSION = aiohttp.ClientSession(
+            connector=connector,
+            timeout=aiohttp.ClientTimeout(total=8, connect=3)
+        )
+    return GLOBAL_WARM_SESSION
+
+async def prewarm_warm_session():
+    """Pre-warms DNS and TLS 1.3 socket to Chicken Land RPC server so bursts execute in < 200ms."""
+    try:
+        session = await get_warm_session()
+        async with session.get(RPC_URL, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+            pass
+        logger.info("[Sniper Pre-Warm] 🔥 Persistent TLS socket to Chicken Land RPC server is hot and ready.")
+    except Exception:
+        pass
 
 def extract_code_from_text(text: str) -> Optional[Dict[str, Any]]:
     """
@@ -912,21 +987,20 @@ async def snipe_promo_fleet(
                 return {"ok": True, "code": code, "claimed_count": 0, "status": "ALREADY_CLAIMED"}
 
             if not fleet or len(fleet) < 20:
-                fleet = CACHED_FLEET_TOKENS if (CACHED_FLEET_TOKENS and len(CACHED_FLEET_TOKENS) >= 20) else load_fleet_tokens(force_refresh=False)
+                fleet = CACHED_FLEET_TOKENS if (CACHED_FLEET_TOKENS and len(CACHED_FLEET_TOKENS) >= 20) else load_fleet_tokens(force_refresh=True)
 
             if not fleet:
                 return {"ok": False, "description": "No fleet tokens available"}
 
-            connector = aiohttp.TCPConnector(limit=100, keepalive_timeout=30)
-            async with aiohttp.ClientSession(connector=connector) as session:
-                # Wave 1: Pure Sub-Second Concurrent Redemption Burst (<300ms across 100% of fleet)
-                t_start = time.time()
-                tasks = [
-                    redeem_single_account(session, acc, code, auto_buy_hens=auto_buy_hens)
-                    for acc in fleet.values()
-                ]
-                raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-                total_time = round(time.time() - t_start, 3)
+            session = await get_warm_session()
+            # Wave 1: Pure Sub-Second Concurrent Redemption Burst (<200ms across 100% of fleet over hot TLS sockets)
+            t_start = time.time()
+            tasks = [
+                redeem_single_account(session, acc, code, auto_buy_hens=auto_buy_hens)
+                for acc in fleet.values()
+            ]
+            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+            total_time = round(time.time() - t_start, 3)
 
             results = []
             fleet_uids = list(fleet.keys())
