@@ -720,30 +720,6 @@ async def connect_and_start_bot_wallets(acc_entry: dict, tokens: dict = None, se
             except Exception as e_knx:
                 logger.debug(f"[{name}] Kynex auto-restart note: {e_knx}")
 
-        # 3. Cherry Play: Connect & verify dedicated TON wallet
-        cherry_init = tokens.get("cherry_init_data") or tokens.get("cherry")
-        if cherry_init and ton_addr:
-            try:
-                ch_h = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"tma {cherry_init}",
-                    "X-Device": (tokens.get("cherry_device_id") or f"d_{uid}_{int(time.time()*1000)}").ljust(36, "0")[:36],
-                    "Origin": "https://cherryearn.site",
-                    "Referer": "https://cherryearn.site/",
-                    "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36"
-                }
-                async with session.post(
-                    "https://api.cherryearn.site/api/wallet",
-                    json={"wallet": ton_addr},
-                    headers=ch_h,
-                    timeout=aiohttp.ClientTimeout(total=6)
-                ) as r_ch:
-                    if r_ch.status in (200, 201):
-                        res["connected"].append("Cherry")
-                        logger.info(f"[{name}] 🍒 Bound & verified Cherry Play TON wallet: {ton_addr[:12]}...")
-            except Exception as e_ch:
-                logger.debug(f"[{name}] Cherry wallet note: {e_ch}")
-
         # 4. MexoEarn: Connect dedicated BEP20 EVM wallet
         m_init = tokens.get("mexoearn_init_data") or tokens.get("mexo_init_data")
         ew = acc_entry.get("evm_wallet") or {}

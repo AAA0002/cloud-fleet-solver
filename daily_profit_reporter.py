@@ -7,7 +7,7 @@ Calculates:
 - Total BNB farmed & withdrawn today
 - Real-time fiat valuation (USD $ and BDT ৳) via Binance API
 - Live On-Chain Wallet Balance from Binance Smart Chain
-- Cloudflare Edge Mini-App Yield (13 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, Victor's Company, Dillo Miner, Hunter Miner, Cherry Play)
+- Cloudflare Edge Mini-App Yield (12 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, Victor's Company, Dillo Miner, Hunter Miner)
 Broadcasts report to Telegram Payout Channel (-1004402765950) & Admin DM (6727787768).
 """
 
@@ -169,7 +169,6 @@ async def get_fleet_mining_totals() -> dict:
         "mexo": 0.0,
         "myage": 0.0,
         "lifetime": 0.0,
-        "cherry": 0.0,
         "victors": 0.0,
         "dillo": 0.0,
         "hunter": 0.0
@@ -247,15 +246,6 @@ async def get_fleet_mining_totals() -> dict:
                                 m = re.search(r"(\d+)\s*WATTS", core_str)
                                 if m: totals["lifetime"] += float(m.group(1))
 
-                        # 11. Cherry Play
-                        elif "cherry" in b_name.lower():
-                            if isinstance(core, dict):
-                                try: totals["cherry"] += float(core.get("balance", 0) or 0)
-                                except Exception: pass
-                            else:
-                                m = re.search(r"([\d\.]+)\s*Cherr", core_str)
-                                if m: totals["cherry"] += float(m.group(1))
-
                         # 13. Victor's Company
                         elif "victor" in b_name.lower():
                             if isinstance(core, dict):
@@ -307,8 +297,6 @@ async def get_fleet_mining_totals() -> dict:
                     totals["mexo"] = sum(float(a.get("mexo_balance", 0) or (1600 if str(a.get("user_id")) == "6727787768" else 300)) for a in accs)
                 if totals["lifetime"] == 0.0:
                     totals["lifetime"] = sum(float(a.get("lifetime_power", 0) or 0) for a in accs)
-                if totals.get("cherry", 0.0) == 0.0:
-                    totals["cherry"] = sum(float(a.get("cherry_balance", 0) or 0) for a in accs)
                 if totals["victors"] == 0.0:
                     totals["victors"] = sum(float(a.get("victors_balance", 0) or 0) for a in accs)
                 if totals.get("dillo", 0.0) == 0.0:
@@ -511,7 +499,6 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• *MexoEarn:* `{fleet_totals['mexo']:,.0f} MXO` earned (Shortlinks & High-Yield Quests)\n"
             f"• *MyAgeApp:* `{fleet_totals['myage']:,.0f} AGE` accumulated (Telegram Age Valuation, Hourly Vault & Spins)\n"
             f"• *Lifetime Energy:* `{fleet_totals['lifetime']:,.0f} WATTS` (Power & Energy Production, Ad Rolls & Tasks)\n"
-            f"• *Cherry Play:* `{fleet_totals.get('cherry', 0.0):,.0f} Cherries` (TON Tap Mining, Daily Streaks, Lucky Spins & Tasks)\n"
             f"• *Victor's Company:* `{fleet_totals['victors']:,.0f} Coins` (Autonomous Mining, Shifts & Referral Commissions)\n"
             f"• *Dillo Miner:* `{fleet_totals['dillo']:,.2f} DILLO` (TON Jetton Protocol, 2,400 DILLO/d Passive Farm, Energy Taps & Streaks)\n"
             f"• *Hunter Miner:* `{fleet_totals.get('hunter', 0.0):,.4f} GRAM` (TON Jetton Protocol, 12h Mining Cycles, Tasks & Instant TON Cashouts)\n"

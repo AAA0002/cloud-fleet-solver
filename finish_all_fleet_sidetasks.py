@@ -16,10 +16,9 @@ all dynamic accounts in the fleet for all 13 legitimate bots:
   7. MexoEarn (@MexoEarni_bot)
   8. MyAgeApp (@MyAgeApp)
   9. Lifetime Energy (@lifetime_energy_bot)
-  10. Cherry Play (@CherryPlayBot)
-  11. Victor's Company (@Victors_Company_bot)
-  12. Dillo Miner (@dillo_miner_bot)
-  13. Hunter Miner (@GramHtrsbot)
+  10. Victor's Company (@Victors_Company_bot)
+  11. Dillo Miner (@dillo_miner_bot)
+  12. Hunter Miner (@GramHtrsbot)
 
 Zero Phone Load (Rule 4): Runs once as a clean batch script in cloud/container,
 exits cleanly, and persists updated tokens to Upstash Redis and Cloudflare Edge.
@@ -2030,26 +2029,6 @@ async def sweep_lifetime_tasks(session: aiohttp.ClientSession, uid: str, name: s
     return res
 
 
-async def sweep_cherry_tasks(session: aiohttp.ClientSession, uid: str, name: str, init_data: str, acc: dict) -> Dict[str, Any]:
-    """Sweeps Cherry Play bootstrap, daily streak, lucky spins, referral commission, and tasks."""
-    res = {"bot": "Cherry Play", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0, "streak": 0}
-    if not init_data:
-        res["notes"].append("no_init_data")
-        return res
-    try:
-        from cherry_miner import CherryClient
-        client = CherryClient(uid=str(uid), name=name, init_data=init_data)
-        cycle_res = await client.run_full_farming_cycle(session)
-        res["success"] = cycle_res.get("success", False)
-        res["balance"] = cycle_res.get("balance", 0.0)
-        res["streak"] = cycle_res.get("streak", 0)
-        res["tasks_claimed"] = cycle_res.get("tasks_harvested", 0)
-        res["notes"].append(f"{res['balance']:.0f} Cherries, streak {res['streak']}")
-    except Exception as e:
-        res["notes"].append(f"err: {str(e)[:40]}")
-    return res
-
-
 async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: str, vic_init: str, acc: dict) -> Dict[str, Any]:
     res = {"bot": "Victor's Company", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0, "level": 1}
     if not vic_init:
@@ -2560,29 +2539,23 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         account_report["results"]["lifetime"] = le_res
         logger.info(f"[{name}] (9/15) 🔋 Lifetime Energy: {le_res.get('tasks_claimed', 0)} claimed ({', '.join(le_res.get('notes', [])[:2]) or 'ok'})")
 
-        # 10. Cherry Play
-        cherry_init = merged_toks.get("cherry_init_data") or merged_toks.get("cherry", "")
-        cherry_res = await sweep_cherry_tasks(session, uid, name, cherry_init, merged_toks)
-        account_report["results"]["cherry"] = cherry_res
-        logger.info(f"[{name}] (10/13) 🍒 Cherry Play: {cherry_res.get('tasks_claimed', 0)} claimed ({', '.join(cherry_res.get('notes', [])[:2]) or 'ok'})")
-
-        # 11. Victor's Company
+        # 10. Victor's Company
         vic_init = merged_toks.get("victors_init_data") or merged_toks.get("victors_company_init_data", "")
         vic_res = await sweep_victors_tasks(session, uid, name, vic_init, merged_toks)
         account_report["results"]["victors"] = vic_res
-        logger.info(f"[{name}] (11/13) 🏢 Victor's Company: {vic_res.get('tasks_claimed', 0)} claimed ({', '.join(vic_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (10/12) 🏢 Victor's Company: {vic_res.get('tasks_claimed', 0)} claimed ({', '.join(vic_res.get('notes', [])[:2]) or 'ok'})")
 
-        # 12. Dillo Miner (@dillo_miner_bot)
+        # 11. Dillo Miner (@dillo_miner_bot)
         dillo_init = merged_toks.get("dillo_init_data") or merged_toks.get("dillo") or ""
         dillo_res = await sweep_dillo_tasks(session, uid, name, dillo_init, merged_toks)
         account_report["results"]["dillo"] = dillo_res
-        logger.info(f"[{name}] (12/13) ⛏️ Dillo Miner: {dillo_res.get('tasks_claimed', 0)} claimed ({', '.join(dillo_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (11/12) ⛏️ Dillo Miner: {dillo_res.get('tasks_claimed', 0)} claimed ({', '.join(dillo_res.get('notes', [])[:2]) or 'ok'})")
 
-        # 13. Hunter Miner (@GramHtrsbot)
+        # 12. Hunter Miner (@GramHtrsbot)
         hunter_init = merged_toks.get("hunter_init_data") or merged_toks.get("hunter") or merged_toks.get("hunter_token") or ""
         hunter_res = await sweep_hunter_tasks(session, uid, name, hunter_init, merged_toks)
         account_report["results"]["hunter"] = hunter_res
-        logger.info(f"[{name}] (13/13) 🎯 Hunter Miner: {hunter_res.get('tasks_claimed', 0)} claimed ({', '.join(hunter_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (12/12) 🎯 Hunter Miner: {hunter_res.get('tasks_claimed', 0)} claimed ({', '.join(hunter_res.get('notes', [])[:2]) or 'ok'})")
 
         # Propagate newly acquired JWT / refresh tokens to merged_toks and persistent cloud stores
         if merged_toks.get("hunter_jwt"):
@@ -2654,13 +2627,12 @@ async def main():
             mxo_cl = res.get("mexoearn", {}).get("tasks_claimed", 0)
             age_cl = res.get("myage", {}).get("tasks_claimed", 0)
             life_cl = res.get("lifetime", {}).get("tasks_claimed", 0)
-            cherry_cl = res.get("cherry", {}).get("tasks_claimed", 0)
             vic_cl = res.get("victors", {}).get("tasks_claimed", 0)
             dillo_cl = res.get("dillo", {}).get("tasks_claimed", 0)
             hntr_cl = res.get("hunter", {}).get("tasks_claimed", 0)
-            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + cherry_cl + vic_cl + dillo_cl + hntr_cl
+            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + vic_cl + dillo_cl + hntr_cl
             total_tasks += acc_total
-            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} CHY:{cherry_cl} VIC:{vic_cl} DIL:{dillo_cl} HNT:{hntr_cl} | Tot: {acc_total}")
+            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} VIC:{vic_cl} DIL:{dillo_cl} HNT:{hntr_cl} | Tot: {acc_total}")
 
         logger.info("=" * 80)
         logger.info(f"🏁 GRAND TOTAL SIDE-TASKS/REWARDS CLAIMED: {total_tasks}")
@@ -2678,7 +2650,6 @@ async def main():
         mxo_tot = sum(r["results"].get("mexoearn", {}).get("tasks_claimed", 0) for r in reports)
         age_tot = sum(r["results"].get("myage", {}).get("tasks_claimed", 0) for r in reports)
         life_tot = sum(r["results"].get("lifetime", {}).get("tasks_claimed", 0) for r in reports)
-        cherry_tot = sum(r["results"].get("cherry", {}).get("tasks_claimed", 0) for r in reports)
         vic_tot = sum(r["results"].get("victors", {}).get("tasks_claimed", 0) for r in reports)
         dillo_tot = sum(r["results"].get("dillo", {}).get("tasks_claimed", 0) for r in reports)
         hntr_tot = sum(r["results"].get("hunter", {}).get("tasks_claimed", 0) for r in reports)
@@ -2686,10 +2657,10 @@ async def main():
 
         if bot_token and notif_channel:
             short_card = (
-                f"⚡ <b>Fleet 13-Bot Auto-Harvest Complete</b>\n"
+                f"⚡ <b>Fleet 12-Bot Auto-Harvest Complete</b>\n"
                 f"• <b>Accounts Farmed:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code>\n"
                 f"• <b>Tasks & Rewards Claimed:</b> <code>{total_tasks} Total Claimed</code>\n"
-                f"• <b>Active Protocols (13/13):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • CHY:{cherry_tot} • VIC:{vic_tot} • DIL:{dillo_tot} • HNT:{hntr_tot}</code>\n"
+                f"• <b>Active Protocols (12/12):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • VIC:{vic_tot} • DIL:{dillo_tot} • HNT:{hntr_tot}</code>\n"
                 f"• <b>Duration:</b> <code>{elapsed:.1f}s</code> | <b>Node:</b> <code>GitHub Actions Cloud Runner & Edge Mesh</code>\n"
                 f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
             )
@@ -2718,7 +2689,7 @@ async def main():
                 "elapsed_seconds": round(elapsed, 1),
                 "atf": atf_tot, "kynex": kyn_tot, "pepe": pep_tot, "adx": adx_tot,
                 "chicken": chk_tot, "earnvault": ev_tot, "mexo": mxo_tot, "myage": age_tot,
-                "lifetime": life_tot, "cherry": cherry_tot, "victor": vic_tot,
+                "lifetime": life_tot, "victor": vic_tot,
                 "dillo": dillo_tot, "hunter": hntr_tot
             })
         except Exception:
@@ -2733,7 +2704,7 @@ async def main():
                 "protocols": {
                     "atf": atf_tot, "kynex": kyn_tot, "pepe": pep_tot, "adx": adx_tot,
                     "chicken": chk_tot, "earnvault": ev_tot, "mexo": mxo_tot, "myage": age_tot,
-                    "lifetime": life_tot, "cherry": cherry_tot, "victor": vic_tot,
+                    "lifetime": life_tot, "victor": vic_tot,
                     "dillo": dillo_tot, "hunter": hntr_tot
                 }
             })

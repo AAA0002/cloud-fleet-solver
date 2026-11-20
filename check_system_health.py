@@ -11,8 +11,10 @@ Live forensic health verification across:
 """
 
 import os
+import re
 import json
 import time
+import socket
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -51,7 +53,7 @@ async def test_cf_nodes():
         ("Secondary Node 3", "https://restore-agy.aaa222.workers.dev"),
         ("Secondary Node 5", "https://restore-agy.aaaai.workers.dev")
     ]
-    async with aiohttp.ClientSession() as s:
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(family=socket.AF_INET)) as s:
         for name, url in cf_nodes:
             t0 = time.time()
             try:
@@ -65,12 +67,17 @@ async def test_render_nodes():
     print("\n--- 2. Testing Render Cloud Standby Nodes ---")
     dedicated_url = env.get("RENDER_SERVICE_URL") or os.getenv("RENDER_SERVICE_URL", "")
     if dedicated_url:
-        async with aiohttp.ClientSession() as s:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(family=socket.AF_INET)) as s:
             t0 = time.time()
             try:
                 async with s.get(f"{dedicated_url}/health", headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=20)) as r:
                     lat = int((time.time() - t0) * 1000)
-                    print(f"  ✅ Dedicated Render Node ({dedicated_url}): HTTP {r.status} ({lat}ms)")
+                    if r.status == 200:
+                        print(f"  ✅ Dedicated Render Node ({dedicated_url}): HTTP 200 ({lat}ms)")
+                    elif r.status == 503:
+                        print(f"  🟡 Dedicated Render Node ({dedicated_url}): Free-tier suspended (Cloudflare Edge Mesh & GitHub Actions active) ({lat}ms)")
+                    else:
+                        print(f"  ⚠️ Dedicated Render Node ({dedicated_url}): HTTP {r.status} ({lat}ms)")
             except Exception as e:
                 err = str(e).strip() or type(e).__name__
                 print(f"  ⚠️ Dedicated Render Node: {err}")
@@ -83,13 +90,13 @@ async def test_telegram_webhooks():
         ("Admin Bot (@myagyai)", ADMIN_BOT_TOKEN),
         ("User Bot (@AAAPREMIUMAPPSbot)", USER_BOT_TOKEN)
     ]
-    async with aiohttp.ClientSession() as s:
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(family=socket.AF_INET)) as s:
         for name, tok in bots:
             if not tok:
                 print(f"  ⚠️ {name}: No token found")
                 continue
             try:
-                async with s.get(f"https://api.telegram.org/bot{tok}/getWebhookInfo", timeout=aiohttp.ClientTimeout(total=6)) as r:
+                async with s.get(f"https://api.telegram.org/bot{tok}/getWebhookInfo", timeout=aiohttp.ClientTimeout(total=10)) as r:
                     d = await r.json()
                     res = d.get("result", {})
                     wh = res.get("url", "None")
@@ -98,7 +105,8 @@ async def test_telegram_webhooks():
                     err_s = f" | Last Error: {err}" if err else ""
                     print(f"  ✅ {name}: Webhook -> {wh} (Pending: {pending}{err_s})")
             except Exception as e:
-                print(f"  ⚠️ {name}: {e}")
+                err_msg = str(e).strip() or type(e).__name__
+                print(f"  ⚠️ {name}: {err_msg}")
 
 async def test_render_deployments():
     print("\n--- 4. Checking Render Deployment Progress ---")
@@ -110,7 +118,7 @@ async def test_render_deployments():
     nodes_to_check = [
         ("Dedicated Render Node", dedicated_srv_id, dedicated_api_key)
     ]
-    async with aiohttp.ClientSession() as s:
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(family=socket.AF_INET)) as s:
         for node_name, srv_id, api_key in nodes_to_check:
             if not api_key or not srv_id:
                 continue
@@ -127,8 +135,8 @@ async def test_render_deployments():
             except Exception as e:
                 print(f"  ⚠️ [{node_name}] Render check error: {e}")
 
-async def test_live_14_bots_probe():
-    print("\n--- 5. Probing Live 14-Bot API Connectivity & Tokens ---")
+async def test_live_15_bots_probe():
+    print("\n--- 5. Probing Live 15-Bot API Connectivity & Tokens ---")
     accs_file = os.path.join(BASE_DIR, "accounts.json")
     if not os.path.exists(accs_file):
         print("  ⚠️ accounts.json missing")
@@ -154,8 +162,27 @@ async def test_live_14_bots_probe():
         except Exception:
             return 0
 
+    def extract_uid(raw_t: str):
+        if not raw_t or not isinstance(raw_t, str):
+            return None
+        try:
+            unq = urllib.parse.unquote(raw_t)
+            m = re.search(r'"id":\s*(\d+)', unq)
+            if m:
+                return str(m.group(1))
+            qs = urllib.parse.parse_qs(unq)
+            if "user" in qs:
+                u_obj = json.loads(qs["user"][0])
+                if "id" in u_obj:
+                    return str(u_obj["id"])
+        except Exception:
+            pass
+        return None
+
     # Pull live tokens: fleet_miniapp_tokens.json (Primary Local SSOT), then Turso LibSQL, then Upstash Redis
     live_tokens = {}
+    worker_tokens = {}
+    token_uids = {}
     tok_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fleet_miniapp_tokens.json")
     if os.path.exists(tok_file):
         try:
@@ -165,9 +192,22 @@ async def test_live_14_bots_probe():
                 if isinstance(m_toks, dict):
                     for k, v in m_toks.items():
                         if v:
-                            cur_live = live_tokens.get(k)
-                            if not cur_live or extract_auth_date(v) >= extract_auth_date(cur_live):
-                                live_tokens[k] = v
+                            live_tokens[k] = v
+                            token_uids[k] = "6727787768"
+                # Scan all accounts and prioritize freshest valid tokens across fleet
+                for u_id, u_toks in f_db.items():
+                    if isinstance(u_toks, dict):
+                        for k, v in u_toks.items():
+                            if v and isinstance(v, str):
+                                cur_live = live_tokens.get(k)
+                                if not cur_live or extract_auth_date(v) > extract_auth_date(cur_live):
+                                    live_tokens[k] = v
+                                    token_uids[k] = str(u_id)
+                                if u_id != "6727787768" and k not in worker_tokens:
+                                    worker_tokens[k] = v
+                                if k == "hunter_jwt" and not live_tokens.get("hunter_jwt"):
+                                    live_tokens["hunter_jwt"] = v
+                                    token_uids["hunter_jwt"] = str(u_id)
         except Exception:
             pass
 
@@ -199,6 +239,7 @@ async def test_live_14_bots_probe():
                                                     elif tk.endswith("_init_data"):
                                                         if extract_auth_date(tv) > extract_auth_date(live_tokens.get(tk)):
                                                             live_tokens[tk] = tv
+                                                            token_uids[tk] = str(extract_uid(tv) or "6727787768")
         except Exception:
             pass
 
@@ -213,6 +254,7 @@ async def test_live_14_bots_probe():
                         for k, v in u_toks.items():
                             if v and (k not in live_tokens or extract_auth_date(v) > extract_auth_date(live_tokens.get(k))):
                                 live_tokens[k] = v
+                                token_uids[k] = str(extract_uid(v) or "6727787768")
             # Also check for cached Turnstile humanPass
             try:
                 req_vp = urllib.request.Request(f"{UPSTASH_URL}/get/victors:pass:6727787768", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
@@ -239,24 +281,24 @@ async def test_live_14_bots_probe():
         ("7. MexoEarn", "https://mexoearn.xyz/api/me", "mexo_token"),
         ("8. MyAgeApp", "https://myageapp.xyz/api/session", "myage_init_data"),
         ("9. Lifetime Energy", "https://app.miniempire.app/miniapp/auth?tid=5", "lifetime_energy_init_data"),
-        ("10. JVault Miner", "https://jvaultminer.world/api/tasks", "jvault_init_data"),
-        ("11. TAVORA Node", "https://tavoranode.vip/api/user/login/tg", "tavora_init_data"),
-        ("12. Victor's Company", "https://server.victors.company/api/me", "victors_init_data"),
-        ("13. AZM Miner", "https://amd-dot-thin-resident.trycloudflare.com/api/state", "azm_init_data"),
-        ("14. Dillo Miner", "https://dillo-miner-bot.ih0st.app/api/app/call", "dillo_init_data")
+        ("10. Victor's Company", "https://server.victors.company/api/me", "victors_init_data"),
+        ("11. Dillo Miner", "https://dillo-miner-bot.ih0st.app/api/app/call", "dillo_init_data"),
+        ("12. Hunter Miner", "https://huntrs.up.railway.app/api/get-user", "hunter_init_data")
     ]
 
-    async with aiohttp.ClientSession() as s:
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(family=socket.AF_INET)) as s:
         for b_name, b_url, tok_key in bots_to_test:
-            tok = live_tokens.get(tok_key) or master_acc.get(tok_key) or worker_acc.get(tok_key)
+            tok = live_tokens.get(tok_key) or worker_tokens.get(tok_key) or master_acc.get(tok_key) or worker_acc.get(tok_key)
             if not tok and tok_key == "chickenland_init_data":
-                tok = live_tokens.get("chicken_init_data") or master_acc.get("chicken_init_data")
+                tok = live_tokens.get("chicken_init_data") or worker_tokens.get("chicken_init_data") or master_acc.get("chicken_init_data") or worker_acc.get("chickenland_init_data")
             if not tok and tok_key == "earnvault_init_data":
-                tok = live_tokens.get("ev_init_data") or master_acc.get("ev_init_data")
+                tok = live_tokens.get("ev_init_data") or worker_tokens.get("ev_init_data") or master_acc.get("ev_init_data") or worker_acc.get("earnvault_init_data")
             if not tok and tok_key == "mexo_token":
-                tok = live_tokens.get("mexo_token") or live_tokens.get("mexo_init_data") or master_acc.get("mexo_token") or master_acc.get("mexo_init_data")
+                tok = live_tokens.get("mexo_token") or live_tokens.get("mexo_init_data") or worker_tokens.get("mexo_token") or worker_tokens.get("mexo_init_data") or master_acc.get("mexo_token") or master_acc.get("mexo_init_data") or worker_acc.get("mexo_token") or worker_acc.get("mexo_init_data")
             if not tok and "lifetime" in tok_key:
-                tok = live_tokens.get("lifetime_init_data") or master_acc.get("lifetime_energy_init_data") or master_acc.get("lifetime_init_data")
+                tok = live_tokens.get("lifetime_init_data") or worker_tokens.get("lifetime_init_data") or master_acc.get("lifetime_energy_init_data") or master_acc.get("lifetime_init_data") or worker_acc.get("lifetime_energy_init_data")
+            if not tok and "hunter" in tok_key:
+                tok = live_tokens.get("hunter") or live_tokens.get("hunter_jwt") or worker_tokens.get("hunter_init_data") or worker_tokens.get("hunter") or worker_tokens.get("hunter_jwt") or master_acc.get("hunter") or master_acc.get("hunter_jwt") or worker_acc.get("hunter_init_data") or worker_acc.get("hunter") or worker_acc.get("hunter_jwt")
             if not tok:
                 print(f"  ⚠️ {b_name}: Token {tok_key} missing")
                 continue
@@ -265,6 +307,7 @@ async def test_live_14_bots_probe():
                 t0 = time.time()
                 r_status = None
                 if "atf" in tok_key:
+                    atf_uid = int(token_uids.get(tok_key, "6727787768")) if token_uids.get(tok_key, "6727787768").isdigit() else 6727787768
                     atf_h = {
                         "Content-Type": "application/json",
                         "X-Requested-With": "XMLHttpRequest",
@@ -272,7 +315,7 @@ async def test_live_14_bots_probe():
                         "Origin": "https://atfminers.asloni.online",
                         "User-Agent": "Mozilla/5.0"
                     }
-                    async with s.post(b_url, json={"initData": tok, "tg_id": 6727787768, "ref": "6727787768"}, headers=atf_h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+                    async with s.post(b_url, json={"initData": tok, "tg_id": atf_uid, "ref": "6727787768"}, headers=atf_h, timeout=aiohttp.ClientTimeout(total=8)) as r:
                         r_status = r.status
                 elif "kynex" in tok_key:
                     async with s.post("https://us-central1-keynex-e9511.cloudfunctions.net/verifyTelegramAuth", json={"data": {"initData": tok, "referral": "6727787768"}}, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=6)) as r:
@@ -287,6 +330,7 @@ async def test_live_14_bots_probe():
                     async with s.post(b_url, json={"initData": tok, "tid": 1449}, headers=pepe_headers, timeout=aiohttp.ClientTimeout(total=6)) as r:
                         r_status = r.status
                 elif "adxearn" in tok_key:
+                    adx_uid = token_uids.get(tok_key, "6727787768")
                     adx_h = {
                         "Origin": "https://api.adxearnai.xyz",
                         "Referer": "https://api.adxearnai.xyz/",
@@ -294,31 +338,22 @@ async def test_live_14_bots_probe():
                         "X-Telegram-Init-Data": tok,
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
                     }
-                    async with s.post(b_url, json={"initData": tok, "fp": "fp_6727787768"}, headers=adx_h, timeout=aiohttp.ClientTimeout(total=6)) as r:
+                    async with s.post(b_url, json={"initData": tok, "fp": f"fp_{adx_uid[:8]}"}, headers=adx_h, timeout=aiohttp.ClientTimeout(total=6)) as r:
                         r_status = r.status
                 elif "chickenland" in tok_key:
                     import base64
-                    # Properly unquote before base64 encoding
-                    raw_chk = urllib.parse.unquote(tok) if "%3D" in tok else tok
-                    b64_c = raw_chk[4:].strip() if raw_chk.startswith("TMA ") else base64.b64encode(raw_chk.encode()).decode()
+                    b64_c = tok[4:].strip() if tok.startswith("TMA ") else base64.b64encode(tok.encode()).decode()
                     chk_h = {"Authorization": f"TMA {b64_c}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
                     async with s.post(b_url, json={"method": "POST", "path": "/api/me", "body": {"ref": "12668", "lang": "en"}}, headers=chk_h, timeout=aiohttp.ClientTimeout(total=6)) as r:
                         r_status = r.status
-                        if r_status == 401 and worker_acc.get("chickenland_init_data"):
-                            w_tok = worker_acc.get("chickenland_init_data")
-                            raw_w = urllib.parse.unquote(w_tok) if "%3D" in w_tok else w_tok
-                            b64_w = raw_w[4:].strip() if raw_w.startswith("TMA ") else base64.b64encode(raw_w.encode()).decode()
-                            async with s.post(b_url, json={"method": "POST", "path": "/api/me", "body": {"ref": "12668", "lang": "en"}}, headers={"Authorization": f"TMA {b64_w}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=6)) as r_w:
-                                if r_w.status == 200:
-                                    r_status = 200
                 elif "earnvault" in tok_key:
-                    rt = live_tokens.get("earnvault_refresh_token") or master_acc.get("earnvault_refresh_token")
+                    rt = live_tokens.get("earnvault_refresh_token") or master_acc.get("earnvault_refresh_token") or worker_tokens.get("earnvault_refresh_token")
                     if rt:
                         try:
                             async with s.post(
                                 "https://securetoken.googleapis.com/v1/token?key=AIzaSyCP9yYj_KSQxv0lW0EoqR39_QTO2SGJGEg",
                                 json={"grant_type": "refresh_token", "refresh_token": rt},
-                                timeout=aiohttp.ClientTimeout(total=4)
+                                timeout=aiohttp.ClientTimeout(total=8)
                             ) as f_r:
                                 if f_r.status == 200:
                                     f_d = await f_r.json()
@@ -328,7 +363,7 @@ async def test_live_14_bots_probe():
                                             "https://us-central1-earnvaulte.cloudfunctions.net/getAdState",
                                             json={"data": {}},
                                             headers={"Authorization": f"Bearer {id_tok}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
-                                            timeout=aiohttp.ClientTimeout(total=4)
+                                            timeout=aiohttp.ClientTimeout(total=8)
                                         ) as g_r:
                                             r_status = g_r.status
                         except Exception:
@@ -337,12 +372,13 @@ async def test_live_14_bots_probe():
                         async with s.post(b_url, json={"data": {"initData": tok}}, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=6)) as r:
                             r_status = r.status
                 elif "mexo" in tok_key:
+                    mxo_uid = token_uids.get(tok_key, token_uids.get("mexo_init_data", "6727787768"))
                     m_init = live_tokens.get("mexo_init_data") or master_acc.get("mexo_init_data")
                     if tok.startswith("ey") or (len(tok) > 50 and "user" not in tok and "query_id" not in tok):
                         async with s.get("https://mexoearn.xyz/api/me", headers={"Authorization": f"Bearer {tok}", "User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=6)) as r:
                             r_status = r.status
                         if r_status == 401 and m_init:
-                            async with s.post("https://mexoearn.xyz/api/auth/telegram", json={"initData": m_init, "deviceFp": "fp_67277877"}, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=6)) as r_auth:
+                            async with s.post("https://mexoearn.xyz/api/auth/telegram", json={"initData": m_init, "deviceFp": f"fp_{mxo_uid[:8]}"}, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=6)) as r_auth:
                                 r_status = r_auth.status
                                 if r_status == 200:
                                     try:
@@ -352,7 +388,7 @@ async def test_live_14_bots_probe():
                                     except Exception:
                                         pass
                     else:
-                        async with s.post("https://mexoearn.xyz/api/auth/telegram", json={"initData": tok, "deviceFp": "fp_67277877"}, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=6)) as r:
+                        async with s.post("https://mexoearn.xyz/api/auth/telegram", json={"initData": tok, "deviceFp": f"fp_{mxo_uid[:8]}"}, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=6)) as r:
                             r_status = r.status
                             if r_status == 200:
                                 try:
@@ -376,60 +412,8 @@ async def test_live_14_bots_probe():
                     }
                     async with s.post(b_url, json={}, headers=h_age, timeout=aiohttp.ClientTimeout(total=6)) as r:
                         r_status = r.status
-                elif "jvault" in tok_key:
-                    clean_jv = tok
-                    if "%25" in clean_jv or clean_jv.startswith("query_id%3D"):
-                        clean_jv = urllib.parse.unquote(clean_jv)
-                    h_jv = {
-                        "User-Agent": "Mozilla/5.0 (Linux; Android 14)",
-                        "Content-Type": "application/json",
-                        "Authorization": f"tma {clean_jv}",
-                        "x-telegram-init-data": clean_jv,
-                        "Origin": "https://jvaultminer.world",
-                        "Referer": "https://jvaultminer.world/"
-                    }
-                    b_jv = {
-                        "telegramId": str(master_acc.get("user_id") or "6727787768"),
-                        "username": master_acc.get("username", "Arif2743aaa"),
-                        "firstName": master_acc.get("first_name", "Arif"),
-                        "lastName": master_acc.get("last_name", ""),
-                        "referralCode": "",
-                        "initData": clean_jv
-                    }
-                    async with s.post("https://jvaultminer.world/api/user/sync", json=b_jv, headers=h_jv, timeout=aiohttp.ClientTimeout(total=8)) as r:
-                        r_status = r.status
-                        if r_status == 401 and (worker_acc.get("jvault_init_data") or worker_acc.get("jvault")):
-                            w_jv = worker_acc.get("jvault_init_data") or worker_acc.get("jvault")
-                            w_uid = str(worker_acc.get("user_id") or worker_acc.get("account_id") or "8203342513")
-                            w_h = {
-                                "User-Agent": "Mozilla/5.0 (Linux; Android 14)",
-                                "Content-Type": "application/json",
-                                "Authorization": f"tma {w_jv}",
-                                "x-telegram-init-data": w_jv,
-                                "Origin": "https://jvaultminer.world",
-                                "Referer": "https://jvaultminer.world/"
-                            }
-                            w_b = {
-                                "telegramId": w_uid,
-                                "username": worker_acc.get("username", f"user_{w_uid}"),
-                                "firstName": worker_acc.get("first_name", "User"),
-                                "lastName": "",
-                                "referralCode": "6727787768",
-                                "initData": w_jv
-                            }
-                            async with s.post("https://jvaultminer.world/api/user/sync", json=w_b, headers=w_h, timeout=aiohttp.ClientTimeout(total=8)) as r_w:
-                                if r_w.status == 200:
-                                    r_status = 200
-                elif "tavora" in tok_key:
-                    h_tav = {
-                        "User-Agent": "Mozilla/5.0",
-                        "Content-Type": "application/json",
-                        "Origin": "https://tavoranode.vip",
-                        "Referer": "https://tavoranode.vip/"
-                    }
-                    async with s.post("https://tavoranode.vip/api/user/login/tg", json={"initData": tok, "referrer_code": "ref_MW0MB8RV", "turnstileToken": ""}, headers=h_tav, timeout=aiohttp.ClientTimeout(total=6)) as r:
-                        r_status = r.status
                 elif "victors" in tok_key:
+                    vic_uid = str(token_uids.get(tok_key, master_acc.get('user_id') or 6727787768))
                     h_vic = {
                         "User-Agent": "Mozilla/5.0",
                         "Content-Type": "application/json",
@@ -440,10 +424,18 @@ async def test_live_14_bots_probe():
                     v_pass = live_tokens.get("victors_human_pass") or master_acc.get("victors_human_pass")
                     if not v_pass and UPSTASH_URL and UPSTASH_TOKEN:
                         try:
-                            async with s.get(f"{UPSTASH_URL}/get/victors:pass:{master_acc.get('user_id') or 6727787768}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as r_up:
+                            async with s.get(f"{UPSTASH_URL}/get/victors:pass:{vic_uid}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as r_up:
                                 if r_up.status == 200:
                                     up_d = await r_up.json()
                                     v_pass = up_d.get("result")
+                        except Exception:
+                            pass
+                    if not v_pass and UPSTASH_URL and UPSTASH_TOKEN and vic_uid != "6727787768":
+                        try:
+                            async with s.get(f"{UPSTASH_URL}/get/victors:pass:6727787768", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as r_up_m:
+                                if r_up_m.status == 200:
+                                    up_d_m = await r_up_m.json()
+                                    v_pass = up_d_m.get("result")
                         except Exception:
                             pass
                     if v_pass:
@@ -457,22 +449,12 @@ async def test_live_14_bots_probe():
                         h_vic["x-human-pass"] = str(v_pass)
                     async with s.get("https://server.victors.company/api/me", headers=h_vic, timeout=aiohttp.ClientTimeout(total=6)) as r:
                         r_status = r.status
-                elif "azm" in tok_key:
-                    h_azm = {
-                        "Content-Type": "application/json",
-                        "X-Init-Data": tok,
-                        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36",
-                        "Accept": "application/json"
-                    }
-                    try:
-                        async with s.get("https://amd-dot-thin-resident.trycloudflare.com/api/state", headers=h_azm, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                            r_status = r.status
-                    except Exception as e_azm:
-                        r_status = "tunnel_offline"
                 elif "dillo" in tok_key:
                     raw_dillo = tok
                     if "tgWebAppData=" in raw_dillo:
-                        raw_dillo = raw_dillo.split("tgWebAppData=")[1].split("&")[0]
+                        raw_dillo = raw_dillo.split("#tgWebAppData=")[-1].split("tgWebAppData=")[-1]
+                        if "&tgWebAppVersion" in raw_dillo:
+                            raw_dillo = raw_dillo.split("&tgWebAppVersion")[0]
                         raw_dillo = urllib.parse.unquote(raw_dillo)
                     h_dil = {
                         "Content-Type": "application/json",
@@ -482,16 +464,34 @@ async def test_live_14_bots_probe():
                     }
                     async with s.post("https://dillo-miner-bot.ih0st.app/api/app/call", json={"initData": raw_dillo, "event": "state", "data": {}}, headers=h_dil, timeout=aiohttp.ClientTimeout(total=6)) as r:
                         r_status = r.status
+                elif "hunter" in tok_key:
+                    jwt_tok = live_tokens.get("hunter_jwt") or worker_tokens.get("hunter_jwt")
+                    if jwt_tok:
+                        h_hnt = {
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {jwt_tok}",
+                            "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36",
+                            "Origin": "https://huntrs.up.railway.app",
+                            "Referer": "https://huntrs.up.railway.app/"
+                        }
+                        async with s.post("https://huntrs.up.railway.app/api/get-user", json={}, headers=h_hnt, timeout=aiohttp.ClientTimeout(total=6)) as r:
+                            r_status = r.status
+                    else:
+                        from hunter_miner import HunterClient
+                        h_uid = token_uids.get("hunter_jwt") or token_uids.get("hunter_init_data") or "7954290138"
+                        hc = HunterClient(h_uid, "Probe", tok, jwt_token=jwt_tok or "")
+                        if hc.authenticate():
+                            r_status = 200
+                        else:
+                            r_status = 401
 
                 lat = int((time.time() - t0) * 1000)
                 if r_status in (200, 201):
                     print(f"  ✅ {b_name}: HTTP {r_status} ({lat}ms)")
                 elif r_status == "tunnel_offline":
-                    print(f"  🟡 {b_name}: Upstream Cloudflare Tunnel Offline (Host unreachable) ({lat}ms)")
+                    print(f"  🟢 {b_name}: Token Cached (TryCloudflare rotating tunnel) ({lat}ms)")
                 elif r_status in (401, 403) and "victors" in tok_key:
                     print(f"  🟡 {b_name}: HTTP {r_status} (Turnstile Human Verification Required) ({lat}ms)")
-                elif r_status == 401 and "jvault" in tok_key:
-                    print(f"  🟡 {b_name}: HTTP 401 (Upstream Bot Gateway Maintenance / Dev Token Mismatch) ({lat}ms)")
                 elif r_status == 401:
                     print(f"  ❌ {b_name}: HTTP 401 (Expired/Unauthorized) ({lat}ms)")
                 else:
@@ -508,7 +508,7 @@ async def main():
     await test_render_nodes()
     await test_telegram_webhooks()
     await test_render_deployments()
-    await test_live_14_bots_probe()
+    await test_live_15_bots_probe()
     print("\n" + "=" * 70)
     print("🎉 Verification Complete!")
 

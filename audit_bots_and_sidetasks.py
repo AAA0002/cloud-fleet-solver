@@ -734,37 +734,6 @@ async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
         else:
             report["bots"]["9. Lifetime Energy"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
 
-        # 10. Cherry Play
-        cherry_init = tokens.get("cherry_init_data") or tokens.get("cherry")
-        if cherry_init:
-            b_rep = {"core": {}, "side_tasks": []}
-            try:
-                ch_h = {
-                    **headers,
-                    "Authorization": f"tma {cherry_init}",
-                    "X-Device": (tokens.get("cherry_device_id") or f"d_{uid}_{int(time.time()*1000)}").ljust(36, "0")[:36],
-                    "Origin": "https://cherryearn.site",
-                    "Referer": "https://cherryearn.site/"
-                }
-                async with session.get("https://api.cherryearn.site/api/bootstrap", headers=ch_h, timeout=aiohttp.ClientTimeout(total=8)) as r:
-                    if r.status == 200:
-                        b_data = await r.json()
-                        bal = float(b_data.get("user", {}).get("balance", 0) or 0)
-                        streak = b_data.get("streak", {}).get("current", 0)
-                        spins = b_data.get("spins", {}).get("available", 0)
-                        b_rep["core"] = {"status": f"Active: {bal:.0f} Cherries (Streak {streak})", "balance": bal, "streak": streak}
-                        b_rep["side_tasks"].append(f"Streak {streak} • Spins {spins}")
-                    elif r.status == 423:
-                        b_rep["core"] = {"status": "Active: 250 Cherries (Proxy Protected)", "balance": 250.0, "streak": 1}
-                        b_rep["side_tasks"].append("Network Cooldown (423) • Anti-Ban Active")
-                    else:
-                        b_rep["core"] = {"status": f"HTTP {r.status}"}
-            except Exception as e:
-                b_rep["error"] = str(e)
-            report["bots"]["10. Cherry Play"] = b_rep
-        else:
-            report["bots"]["10. Cherry Play"] = {"core": {"status": "Missing Token ⚠️"}, "side_tasks": []}
-
         # 11. Victor's Company
         vic_init = tokens.get("victors_init_data")
         vic_pass = tokens.get("victors_human_pass") or tokens.get("victors_pass")
@@ -992,7 +961,6 @@ async def main():
         "myage_gram": 0.0,
         "lifetime_watts": 0,
         "lifetime_energy": 0.0,
-        "cherry": 0.0,
         "victors": 0.0,
         "dillo": 0.0,
         "hunter": 0.0
@@ -1044,9 +1012,6 @@ async def main():
         le_core = bots.get("9. Lifetime Energy", {}).get("core", {})
         totals["lifetime_watts"] += int(le_core.get("power", 0) or 0)
         totals["lifetime_energy"] += float(le_core.get("hashes", 0.0) or 0.0)
-        # 10. Cherry Play
-        cherry_core = bots.get("10. Cherry Play", {}).get("core", {}) or bots.get("14. Cherry Play", {}).get("core", {})
-        totals["cherry"] += float(cherry_core.get("balance", 0.0) or 0.0)
         # 11. Victor's Company
         vic_core = bots.get("11. Victor's Company", {}).get("core", {}) or bots.get("12. Victor's Company", {}).get("core", {})
         totals["victors"] += float(vic_core.get("balance", 0.0) or 0.0)
@@ -1069,7 +1034,6 @@ async def main():
     print(f"  • ⚡ MexoEarn:        {totals.get('mexo', 0):,} MXO")
     print(f"  • 🎂 MyAgeApp:        {totals.get('myage', 0):,} AGE ({totals.get('myage_gram', 0.0):.2f} GRAM)")
     print(f"  • 🔋 Lifetime Energy: {totals['lifetime_watts']:,} WATTS • {totals['lifetime_energy']:.4f} ENERGY")
-    print(f"  • 🍒 Cherry Play:     {totals['cherry']:,.0f} Cherries")
     print(f"  • 🏢 Victor's Co:     {totals['victors']:,.0f} VIC Coins")
     print(f"  • ⛏️ Dillo Miner:     {totals.get('dillo', 0.0):,.2f} DILLO")
     print(f"  • 🎯 Hunter Miner:    {totals.get('hunter', 0.0):,.4f} GRAM")
@@ -1083,10 +1047,10 @@ async def main():
     if bot_token and notif_channel:
         healthy_accounts = sum(1 for r in fleet_reports.values() if sum(1 for b, v in r.get("bots", {}).items() if not v.get("error")) >= 4)
         short_card = (
-            f"🔍 <b>Fleet-Wide 13-Bot Audit Complete</b>\n"
+            f"🔍 <b>Fleet-Wide 12-Bot Audit Complete</b>\n"
             f"• <b>Accounts Audited:</b> <code>{len(fleet_reports)}/{len(fleet_reports)} Checked</code>\n"
             f"• <b>Operational Nodes:</b> <code>{healthy_accounts}/{len(fleet_reports)} Healthy</code>\n"
-            f"• <b>Active Protocols:</b> <code>13/13 Legitimate Mining Pools</code>\n"
+            f"• <b>Active Protocols:</b> <code>12/12 Legitimate Mining Pools</code>\n"
             f"• <b>Accumulated Yields:</b>\n"
             f"🪙 <code>{totals['atf']:,.1f} ATF</code>\n"
             f"  🌐 <code>{totals['knx']:,.0f} KNX</code> • 🐸 <code>{totals['pepe']:,.0f} PEPE</code>\n"
@@ -1096,7 +1060,6 @@ async def main():
             f"  ⚡ <code>{totals.get('mexo', 0):,} MXO</code>\n"
             f"  🎂 <code>{totals.get('myage', 0):,} AGE ({totals.get('myage_gram', 0.0):.2f} GRAM)</code>\n"
             f"  ⚡ <code>{totals['lifetime_watts']:,} WATTS ({totals['lifetime_energy']:.4f} ENERGY)</code>\n"
-            f"  🍒 <code>{totals['cherry']:,.0f} Cherries</code>\n"
             f"  🏢 <code>{totals['victors']:,.0f} VIC Coins</code>\n"
             f"  ⛏️ <code>{totals.get('dillo', 0.0):,.2f} DILLO</code> • 🎯 <code>{totals.get('hunter', 0.0):,.4f} GRAM</code>\n"
             f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"

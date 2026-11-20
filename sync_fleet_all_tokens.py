@@ -49,7 +49,6 @@ TARGET_BOTS = [
     "mexoearn",
     "myage",
     "lifetime",
-    "cherry",
     "victors",
     "dillo"
 ]
@@ -68,8 +67,6 @@ TOKEN_KEYS = [
     "myage_init_data",
     "lifetime_energy_init_data",
     "lifetime_init_data",
-    "cherry_init_data",
-    "cherry_device_id",
     "victors_init_data",
     "victors_human_pass",
     "dillo_init_data",

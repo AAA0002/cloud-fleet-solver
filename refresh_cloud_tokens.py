@@ -107,9 +107,6 @@ EARNVAULT_BOT = "EarnVaultApp_bot"
 MEXOEARN_BOT = "MexoEarni_bot"
 MYAGE_BOT = "MyAgeApp"
 LIFETIME_BOT = "lifetime_energy_bot"
-CHERRY_BOT = "CherryPlayBot"
-CHERRY_REF = "r9bsfi3a8c"
-CHERRY_APP_URL = "https://cherryearn.site"
 VICTORS_BOT = "Victors_Company_bot"
 
 ATF_REF = "6727787768"
@@ -847,18 +844,6 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
             tokens["lifetime_energy_init_data"] = le_tok
             tokens["lifetime_init_data"] = le_tok
             print(f"  ⚡ Lifetime Energy: Collected")
-        await asyncio.sleep(0.5)
-
-        # 11. Cherry Play (@CherryPlayBot)
-        cherry_p = CHERRY_REF
-        cherry_tok = await extract_bot_webapp_token(cl, CHERRY_BOT, start_param=cherry_p, default_url=CHERRY_APP_URL, candidate_short_names=["play", "app"], prefer_direct_url=True)
-        if not cherry_tok:
-            cherry_tok = await extract_bot_webapp_token(cl, CHERRY_BOT, start_param=cherry_p, default_url=CHERRY_APP_URL, candidate_short_names=["play", "app"], prefer_direct_url=False)
-        if cherry_tok:
-            tokens["cherry_init_data"] = cherry_tok
-            tokens["cherry"] = cherry_tok
-            tokens["cherryplay_init_data"] = cherry_tok
-            print(f"  🍒 Cherry Play: Collected")
         await asyncio.sleep(0.5)
 
         # 12. Victor's Company (@Victors_Company_bot)
