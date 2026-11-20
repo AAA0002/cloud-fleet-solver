@@ -297,7 +297,7 @@ async def withdraw_chickenland(session: aiohttp.ClientSession, uid: str, name: s
 
 
 async def withdraw_pepegram(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """PepeGram: Swap >= 1,000 PEPE to TON and cash out to Master TON Vault."""
+    """PepeGram: Swap >= 2,000,000 PEPE to TON and cash out to Master TON Vault."""
     pepe_init = tokens.get("pepegram_init_data") or tokens.get("pepe_init_data")
     if not pepe_init:
         return None
@@ -791,7 +791,7 @@ async def withdraw_dillo(session: aiohttp.ClientSession, uid: str, name: str, to
     return None
 
 async def withdraw_hunter(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Instant on-chain cashout to Master TON Vault for Hunter Miner."""
+    """Instant on-chain cashout to Master TON Vault for Hunter Miner (>= 0.50 GRAM)."""
     hunter_init = tokens.get("hunter_init_data") or tokens.get("hunter") or tokens.get("hunter_token")
     hunter_jwt = tokens.get("hunter_jwt")
     if not hunter_init and not hunter_jwt:
@@ -802,7 +802,7 @@ async def withdraw_hunter(session: aiohttp.ClientSession, uid: str, name: str, t
         if client.authenticate():
             u = client.user_data
             bal = float(u.get("withdrawable_balance", 0.0) or u.get("gram_balance", 0.0) or u.get("coin_balance", 0.0) or 0.0)
-            if bal >= 0.05 and not u.get("mining_active"):
+            if bal >= 0.50 and not u.get("mining_active"):
                 wd_res = client.withdraw_gram(bal, MASTER_TON_VAULT)
                 if wd_res.get("success"):
                     await record_payout_receipt("Hunter Miner", "GRAM", bal, MASTER_TON_VAULT, uid, name)
@@ -930,7 +930,7 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
             results["receipts"].append(dillo_res)
             results["by_protocol"]["Dillo Miner"] = results["by_protocol"].get("Dillo Miner", 0) + 1
 
-        # 15. Hunter Miner (>= 0.05 GRAM to Master TON Vault)
+        # 15. Hunter Miner (>= 0.50 GRAM to Master TON Vault)
         hunter_res = await withdraw_hunter(session, uid, name, tokens)
         if hunter_res:
             results["total_withdrawn_count"] += 1
