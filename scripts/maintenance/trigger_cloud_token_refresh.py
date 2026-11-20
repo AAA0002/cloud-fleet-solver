@@ -39,7 +39,7 @@ except ImportError:
     pass
 
 SECRET_KEY = os.getenv("SECRET_KEY", "")
-RENDER_NODE_URL = os.getenv("RENDER_NODE_URL", "https://my-agy-fleet-standby-060h.onrender.com")
+RENDER_NODE_URL = os.getenv("STANDBY_NODE_URL", "")
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_NOTIFICATION_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
 
