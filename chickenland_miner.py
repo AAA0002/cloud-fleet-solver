@@ -222,9 +222,7 @@ class ChickenLandMiner:
         return claimed
 
     def buy_hens(self, breed: str = "basic", max_count: int = 10) -> int:
-        """Buys hens of specified breed if coins are available (workers only, never on Master Account)."""
-        if str(self.user_id) == "6727787768":
-            return 0
+        """Buys hens of specified breed if coins are available (Fleet-wide across all accounts)."""
         prof = self.get_profile()
         user = prof.get("result", {}).get("user", {})
         coins = user.get("coins", 0)
@@ -242,9 +240,7 @@ class ChickenLandMiner:
         return 0
 
     def upgrade_basket(self) -> bool:
-        """Upgrades basket capacity if affordable (workers only, never on Master Account)."""
-        if str(self.user_id) == "6727787768":
-            return False
+        """Upgrades basket capacity if affordable (Fleet-wide across all accounts)."""
         prof = self.get_profile()
         user = prof.get("result", {}).get("user", {})
         coins = user.get("coins", 0)
