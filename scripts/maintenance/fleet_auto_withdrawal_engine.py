@@ -833,8 +833,9 @@ async def withdraw_hunter(session: aiohttp.ClientSession, uid: str, name: str, t
         from hunter_miner import HunterClient
         client = HunterClient(uid, name, hunter_init or "", jwt_token=hunter_jwt or "")
         if client.authenticate():
-            bal = float(client.user_data.get("coin_balance", 0.0) or 0.0)
-            if bal >= 0.05:
+            u = client.user_data
+            bal = float(u.get("withdrawable_balance", 0.0) or u.get("gram_balance", 0.0) or u.get("coin_balance", 0.0) or 0.0)
+            if bal >= 0.05 and not u.get("mining_active"):
                 wd_res = client.withdraw_gram(bal, MASTER_TON_VAULT)
                 if wd_res.get("success"):
                     await record_payout_receipt("Hunter Miner", "GRAM", bal, MASTER_TON_VAULT, uid, name)
