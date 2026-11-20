@@ -43,7 +43,7 @@ UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_TOKE
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_NOTIFICATION_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
-DEFAULT_RENDER_URL = "https://my-agy-fleet-standby-060h.onrender.com"
+DEFAULT_RENDER_URL = os.getenv("STANDBY_NODE_URL", "")
 
 # Maximum allowable token age before triggering cloud auto-heal (hours)
 MAX_TOKEN_AGE_HOURS = 16.0
