@@ -68,7 +68,7 @@ if os.path.exists(env_file):
 UPSTASH_URL = os.environ.get("UPSTASH_URL") or os.environ.get("UPSTASH_REDIS_REST_URL") or env.get("UPSTASH_URL") or env.get("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
 UPSTASH_TOKEN = os.environ.get("UPSTASH_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN") or env.get("UPSTASH_TOKEN") or env.get("UPSTASH_REDIS_REST_TOKEN") or ""
 TURSO_URL = os.environ.get("TURSO_DB_URL") or os.environ.get("TURSO_DATABASE_URL") or os.environ.get("TURSO_URL") or env.get("TURSO_DB_URL") or env.get("TURSO_DATABASE_URL") or env.get("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
-TURSO_TOKEN = os.environ.get("TURSO_DB_TOKEN") or os.environ.get("TURSO_AUTH_TOKEN") or env.get("TURSO_DB_TOKEN") or env.get("TURSO_AUTH_TOKEN") or ""
+TURSO_TOKEN = os.environ.get("TURSO_DB_TOKEN") or os.environ.get("TURSO_TOKEN") or os.environ.get("TURSO_AUTH_TOKEN") or env.get("TURSO_DB_TOKEN") or env.get("TURSO_TOKEN") or env.get("TURSO_AUTH_TOKEN") or ""
 SECRET_KEY = os.environ.get("SECRET_KEY") or os.environ.get("CF_SECRET_KEY") or env.get("SECRET_KEY") or env.get("CF_SECRET_KEY") or ""
 
 CF_WORKERS = [
@@ -402,7 +402,8 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
             t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
             t_req = {
                 "requests": [
-                    {"type": "execute", "stmt": {"sql": "SELECT key, val FROM kv_mesh WHERE key LIKE 'fleet:tokens:%';"}}
+                    {"type": "execute", "stmt": {"sql": "SELECT key, val FROM kv_mesh WHERE key LIKE 'fleet:tokens:%';"}},
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'miniapp_tokens';"}}
                 ]
             }
             async with session.post(
@@ -413,16 +414,53 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
             ) as tr:
                 if tr.status == 200:
                     td = await tr.json()
-                    tok_rows = td.get("results", [{}])[0].get("response", {}).get("result", {}).get("rows", [])
+                    results = td.get("results", [])
+                    tok_rows = results[0].get("response", {}).get("result", {}).get("rows", []) if len(results) > 0 else []
                     for r in tok_rows:
-                        u = r[0]["value"].replace("fleet:tokens:", "")
-                        if u.isdigit() and u != "8881914294":
+                        raw_key = r[0]["value"]
+                        raw_val = r[1]["value"]
+                        sub = raw_key.replace("fleet:tokens:", "")
+                        if ":" in sub:
+                            parts = sub.split(":", 1)
+                            uid_part, field_part = parts[0], parts[1]
+                            if uid_part.isdigit() and uid_part != "8881914294":
+                                acc_dict = tokens_db.setdefault(uid_part, {})
+                                if raw_val:
+                                    if field_part not in acc_dict:
+                                        acc_dict[field_part] = raw_val
+                                    elif field_part.endswith("_init_data") and extract_auth_date(raw_val) > extract_auth_date(acc_dict.get(field_part)):
+                                        acc_dict[field_part] = raw_val
+                        elif sub.isdigit() and sub != "8881914294":
                             try:
-                                t_val = json.loads(r[1]["value"]) if isinstance(r[1]["value"], str) else r[1]["value"]
+                                t_val = json.loads(raw_val) if isinstance(raw_val, str) else raw_val
                                 if isinstance(t_val, dict):
-                                    tokens_db[u] = t_val
+                                    acc_dict = tokens_db.setdefault(sub, {})
+                                    for tk, tv in t_val.items():
+                                        if tv:
+                                            if tk not in acc_dict:
+                                                acc_dict[tk] = tv
+                                            elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(acc_dict.get(tk)):
+                                                acc_dict[tk] = tv
                             except Exception:
                                 pass
+                    # Secondary Turso: miniapp_tokens row
+                    if len(results) > 1:
+                        mat_rows = results[1].get("response", {}).get("result", {}).get("rows", [])
+                        if mat_rows:
+                            m_raw = mat_rows[0][0]["value"]
+                            m_dict = robust_json_loads(m_raw)
+                            if isinstance(m_dict, dict):
+                                for uid_str, utoks in m_dict.items():
+                                    s_uid = str(uid_str)
+                                    if s_uid == "8881914294": continue
+                                    acc_dict = tokens_db.setdefault(s_uid, {})
+                                    if isinstance(utoks, dict):
+                                        for tk, tv in utoks.items():
+                                            if tv:
+                                                if tk not in acc_dict:
+                                                    acc_dict[tk] = tv
+                                                elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(acc_dict.get(tk)):
+                                                    acc_dict[tk] = tv
             logger.info(f"Loaded {len(tokens_db)} accounts from Turso LibSQL SSOT.")
         except Exception as te:
             logger.warning(f"Turso tokens fetch note: {te}")
