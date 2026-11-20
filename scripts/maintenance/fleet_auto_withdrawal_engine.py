@@ -393,7 +393,7 @@ async def withdraw_lifetime_energy(session: aiohttp.ClientSession, uid: str, nam
 
 
 async def withdraw_earnvault(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """EarnVault: Auto-cashout >= $1.00 USD to Binance BEP-20 Master EVM Vault."""
+    """EarnVault: Auto-cashout >= $5.00 USD (500 cents) to Binance BEP-20 Master EVM Vault."""
     rf_tok = tokens.get("earnvault_refresh_token")
     ev_init = tokens.get("earnvault_init_data") or tokens.get("ev_init_data")
     ev_key = "AIzaSyCP9yYj_KSQxv0lW0EoqR39_QTO2SGJGEg"
@@ -425,7 +425,7 @@ async def withdraw_earnvault(session: aiohttp.ClientSession, uid: str, name: str
             async with session.post(f"{fb_base}/getDashboard", json={"data": {}}, headers=ev_h, timeout=aiohttp.ClientTimeout(total=8)) as r_dash:
                 if r_dash.status == 200:
                     bal_cents = (await r_dash.json()).get("result", {}).get("balanceCents", 0)
-                    if bal_cents >= 100:  # $1.00 minimum threshold
+                    if bal_cents >= 500:  # $5.00 minimum threshold (upstream 500 cents)
                         payload = {
                             "data": {
                                 "amountCents": bal_cents,
@@ -743,39 +743,6 @@ async def withdraw_kynex(session: aiohttp.ClientSession, uid: str, name: str, to
     return None
 
 
-async def withdraw_azm(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
-    """AZM Miner: Request TON withdrawal when balance >= 10,000 AZM."""
-    azm_init = tokens.get("azm_init_data") or tokens.get("azm") or tokens.get("azmir")
-    if not azm_init:
-        return None
-    try:
-        h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
-        azm_base = tokens.get("azm_api_base") or os.getenv("AZM_API_BASE", "https://amd-dot-thin-resident.trycloudflare.com/api").rstrip("/")
-        if UPSTASH_URL and UPSTASH_TOKEN and "trycloudflare" in azm_base:
-            try:
-                async with session.get(f"{UPSTASH_URL}/get/fleet:azm_api_base", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=2)) as r_b:
-                    if r_b.status == 200:
-                        b_val = (await r_b.json()).get("result")
-                        if b_val and isinstance(b_val, str) and b_val.startswith("http"):
-                            azm_base = b_val.strip().rstrip("/")
-            except Exception:
-                pass
-        async with session.get(f"{azm_base}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
-            if r.status != 200:
-                return None
-            d = await r.json()
-            balance = float(d.get("balance", 0.0) or 0.0)
-            threshold = float(d.get("min_wd", 10000.0) or 10000.0)
-            if balance >= threshold and d.get("wallet"):
-                async with session.post(f"{AZM_BASE}/withdraw", json={"amount": int(balance)}, headers=h, timeout=aiohttp.ClientTimeout(total=8)) as wr:
-                    if wr.status == 200:
-                        recip = d.get("wallet") or ton_addr
-                        await record_payout_receipt("AZM Miner", "AZM", balance, recip, uid, name)
-                        return {"protocol": "AZM Miner", "amount": balance, "symbol": "AZM", "recipient": recip}
-    except Exception:
-        pass
-    return None
-
 
 async def withdraw_dillo(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
     """Dillo Miner: Request TON Jetton withdrawal when balance >= 2,400,000 DILLO and window is open."""
@@ -955,13 +922,6 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
             results["total_withdrawn_count"] += 1
             results["receipts"].append(knx_res)
             results["by_protocol"]["Kynex Network"] = results["by_protocol"].get("Kynex Network", 0) + 1
-
-        # 13. AZM Miner (>= 10,000 AZM to dedicated TON wallet)
-        azm_res = await withdraw_azm(session, uid, name, tokens, ton_addr)
-        if azm_res:
-            results["total_withdrawn_count"] += 1
-            results["receipts"].append(azm_res)
-            results["by_protocol"]["AZM Miner"] = results["by_protocol"].get("AZM Miner", 0) + 1
 
         # 14. Dillo Miner (>= 2,400,000 DILLO to dedicated TON wallet)
         dillo_res = await withdraw_dillo(session, uid, name, tokens, ton_addr)
