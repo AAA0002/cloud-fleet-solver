@@ -220,15 +220,90 @@ class CherryClient:
         res = await self.call_api(session, "/friends/claim", body={}, method="POST")
         return res or {}
 
-    async def bind_ton_wallet(self, session: aiohttp.ClientSession, addr: str) -> Dict[str, Any]:
-        """Bind non-custodial TON wallet address."""
+    async def bind_ton_wallet(self, session: aiohttp.ClientSession, addr: str, bsc_addr: Optional[str] = None) -> Dict[str, Any]:
+        """Bind non-custodial TON wallet address (gram_ton & usdt_ton) and BSC address (usdt_bep20)."""
         if not addr:
             return {}
-        res = await self.call_api(session, "/wallet", body={"method": "ton", "addr": addr}, method="POST")
-        return res or {}
+        res1 = await self.call_api(session, "/wallet", body={"method": "gram_ton", "addr": addr}, method="POST")
+        res2 = await self.call_api(session, "/wallet", body={"method": "usdt_ton", "addr": addr}, method="POST")
+        res3 = None
+        if bsc_addr:
+            res3 = await self.call_api(session, "/wallet", body={"method": "usdt_bep20", "addr": bsc_addr}, method="POST")
+        return res1 or res2 or res3 or {}
+
+    async def unlock_pending_reward(self, session: aiohttp.ClientSession, pending_item: Dict[str, Any]) -> bool:
+        """Unlocks and claims pending arcade/spin reward by watching required short rewarded ad."""
+        pid = pending_item.get("id")
+        note = pending_item.get("note", "reward")
+        amt = pending_item.get("amount", 0)
+        if not pid:
+            return False
+        try:
+            st = await self.call_api(session, "/ads/start", body={"placement": "claim", "ref": pid}, method="POST")
+            if not st or st.get("error"):
+                return False
+            tok = st.get("token")
+            min_watch = int(st.get("min_watch", 5) or 5)
+            await asyncio.sleep(max(min_watch + 1, 6))
+            cmp = await self.call_api(session, "/ads/complete", body={"token": tok, "shown": 1, "clicks": 1}, method="POST")
+            if cmp and (cmp.get("claimed") or not cmp.get("error")):
+                new_bal = cmp.get("balance")
+                if new_bal:
+                    self.balance = float(new_bal)
+                return True
+        except Exception:
+            pass
+        return False
+
+    async def play_arcade_game(self, session: aiohttp.ClientSession, game_code: str) -> Optional[int]:
+        """Plays one arcade round with optimal score and unlocks the resulting pending reward."""
+        try:
+            st = await self.call_api(session, f"/games/{game_code}/start", body={"difficulty": "medium"}, method="POST")
+            if not st or st.get("error"):
+                return None
+            session_id = st.get("session")
+            paid = st.get("paid", True)
+            min_sec = int(st.get("min_seconds", 3) or 3)
+            if not session_id or not paid:
+                return None
+
+            await asyncio.sleep(min_sec + 1)
+            score = 250
+            fin = await self.call_api(session, "/games/finish", body={"session": session_id, "score": score}, method="POST")
+            if not fin or fin.get("error"):
+                return None
+
+            reward = fin.get("reward", 0)
+            pending = fin.get("pending")
+            if pending and isinstance(pending, dict):
+                await asyncio.sleep(2)
+                await self.unlock_pending_reward(session, pending)
+            return reward
+        except Exception:
+            return None
+
+    async def watch_and_claim_ad(self, session: aiohttp.ClientSession, task_id: int, title: str) -> Optional[str]:
+        """Watch a rewarded ad placement and claim task reward."""
+        try:
+            st = await self.call_api(session, "/ads/start", body={"placement": "task", "ref": task_id}, method="POST")
+            if not st or st.get("error"):
+                return None
+            ad_tok = st.get("token")
+            min_watch = int(st.get("min_watch", 5) or 5)
+            await asyncio.sleep(max(min_watch + 1, 6))
+            cmp = await self.call_api(session, "/ads/complete", body={"token": ad_tok, "shown": 1, "clicks": 1}, method="POST")
+            if not cmp or cmp.get("error"):
+                return None
+            clm = await self.call_api(session, f"/tasks/{task_id}/claim", body={}, method="POST")
+            if clm and not clm.get("error"):
+                rew = clm.get("reward", 0)
+                return f"{title} (+{rew} 🍒)"
+        except Exception:
+            pass
+        return None
 
     async def harvest_tasks(self, session: aiohttp.ClientSession, tasks_data: List[Dict[str, Any]]) -> List[str]:
-        """Iterate through available tasks: start, verify, and claim completed ones."""
+        """Iterate through available tasks: start, wait for server timer, verify, and claim completed ones."""
         claimed = []
         if not tasks_data:
             return claimed
@@ -239,31 +314,48 @@ class CherryClient:
             state = t.get("state", "new")
             reward = t.get("reward", 0)
             kind = t.get("kind", "")
+            check = t.get("check", "")
 
             # Skip invite/deposit/telegram-bio prerequisites if not met
             if kind in ["invite", "deposit", "bio"]:
                 continue
 
+            # Special handling for Rewarded Video Ad tasks
+            if check == "ad" or tid in [12, 17, 18, 19]:
+                rep = t.get("repeat", {})
+                done = int(rep.get("done", 0) or 0)
+                per = int(rep.get("per", 10) or 10)
+                if done < per and state == "idle":
+                    ad_res = await self.watch_and_claim_ad(session, tid, title)
+                    if ad_res:
+                        claimed.append(ad_res)
+                        await asyncio.sleep(15.0) # anti-rate-limit cooldown
+                continue
+
             try:
-                if state == "new":
-                    # Start task
-                    await self.call_api(session, f"/tasks/{tid}/start", body={}, method="POST")
-                    await asyncio.sleep(0.5)
+                if state in ["idle", "new"]:
+                    # Start task and read server timer
+                    st = await self.call_api(session, f"/tasks/{tid}/start", body={}, method="POST")
+                    wait_sec = 5
+                    if isinstance(st, dict):
+                        wait_sec = int(st.get("wait", 5) or 5)
+                    # Timer wait for verification window
+                    await asyncio.sleep(wait_sec + 0.5)
                     # Verify task
-                    await self.call_api(session, f"/tasks/{tid}/verify", body={}, method="POST")
-                    await asyncio.sleep(0.5)
-                    # Claim task
-                    c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
-                    if c_res and not c_res.get("error"):
-                        claimed.append(f"{title} (+{reward} 🍒)")
+                    vf = await self.call_api(session, f"/tasks/{tid}/verify", body={}, method="POST")
+                    if vf and not vf.get("error"):
+                        # Claim task
+                        c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
+                        if c_res and not c_res.get("error"):
+                            claimed.append(f"{title} (+{reward} 🍒)")
 
                 elif state in ["wait", "verify"]:
                     # Verify & claim
-                    await self.call_api(session, f"/tasks/{tid}/verify", body={}, method="POST")
-                    await asyncio.sleep(0.5)
-                    c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
-                    if c_res and not c_res.get("error"):
-                        claimed.append(f"{title} (+{reward} 🍒)")
+                    vf = await self.call_api(session, f"/tasks/{tid}/verify", body={}, method="POST")
+                    if vf and not vf.get("error"):
+                        c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
+                        if c_res and not c_res.get("error"):
+                            claimed.append(f"{title} (+{reward} 🍒)")
 
                 elif state == "claim":
                     c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
@@ -341,14 +433,48 @@ class CherryClient:
             for ct in claimed_tasks:
                 report["actions"].append(f"Task: {ct}")
 
-        # 7. Bind TON wallet if not yet bound
-        wallets = user.get("wallets", {})
-        if isinstance(wallets, dict) and not wallets.get("ton") and self.ton_wallet:
+        # 7. Unlock all existing pending rewards (e.g. from Lucky Wheel, Arcade, Daily chests)
+        pending_list = b_data.get("pending", [])
+        if pending_list and isinstance(pending_list, list):
+            unlocked_count = 0
+            for p in pending_list:
+                if await self.unlock_pending_reward(session, p):
+                    unlocked_count += 1
+                    await asyncio.sleep(6.0)
+            if unlocked_count > 0:
+                report["actions"].append(f"Unlocked {unlocked_count} Pending Rewards 🔓")
+
+        # 8. Play available arcade games (up to daily limits)
+        games_list = b_data.get("games", [])
+        if games_list and isinstance(games_list, list):
+            played_count = 0
+            gained_cherries = 0
+            for g in games_list:
+                code = g.get("code")
+                plays_left = int(g.get("plays_left", 0) or 0)
+                # Play up to 3 turns per game per cycle
+                for _ in range(min(plays_left, 3)):
+                    rew = await self.play_arcade_game(session, code)
+                    if rew is not None:
+                        played_count += 1
+                        gained_cherries += rew
+                        await asyncio.sleep(2.0)
+                    else:
+                        break
+            if played_count > 0:
+                report["actions"].append(f"Played {played_count} Arcade Games (+{gained_cherries} 🍒) 🕹️")
+
+        # 9. Bind TON wallet if not yet bound
+        addresses = user.get("addresses", {})
+        if isinstance(addresses, dict) and not addresses.get("gram_ton") and self.ton_wallet:
             w_res = await self.bind_ton_wallet(session, self.ton_wallet)
             if w_res and not w_res.get("error"):
                 report["actions"].append(f"Bound TON Wallet {self.ton_wallet[:6]}... ✅")
 
         report["balance"] = self.balance
+        report["streak"] = self.streak_day
+        report["tasks_harvested"] = len(claimed_tasks) if 'claimed_tasks' in locals() else 0
+        report["success"] = True
         return report
 
 
