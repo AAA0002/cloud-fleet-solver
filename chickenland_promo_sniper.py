@@ -246,13 +246,16 @@ def is_code_seen(code: str) -> bool:
         pass
     return False
 
-def is_code_claimed(code: str) -> bool:
+def is_code_claimed(code: str, fast: bool = True) -> bool:
     code = code.strip().upper()
     if code in CLAIMED_CODES:
         return True
-    # Dual-check: Redis and Turso LibSQL
+    if fast:
+        return False
+    # Secondary check: Redis and Turso LibSQL (only on slow path / startup)
     try:
         if redis_command("SISMEMBER", "chickenland:claimed_codes", code) == 1:
+            CLAIMED_CODES.add(code)
             return True
     except Exception:
         pass
@@ -261,6 +264,7 @@ def is_code_claimed(code: str) -> bool:
         if t_claimed:
             parsed = json.loads(t_claimed) if isinstance(t_claimed, str) else t_claimed
             if isinstance(parsed, list) and code in parsed:
+                CLAIMED_CODES.add(code)
                 return True
     except Exception:
         pass
@@ -272,18 +276,20 @@ def is_code_fully_claimed_by_fleet(code: str, fleet_uids: Optional[List[str]] = 
     if not fleet_uids:
         fleet_uids = list(CACHED_FLEET_TOKENS.keys()) if CACHED_FLEET_TOKENS else []
     if not fleet_uids:
-        return is_code_claimed(code)
+        return is_code_claimed(code, fast=True)
     for uid in fleet_uids:
         claimed_set = ACCOUNT_CLAIMED_CODES.get(str(uid), set())
         if code not in claimed_set:
             return False
     return True
 
-def is_code_exhausted(code: str) -> bool:
+def is_code_exhausted(code: str, fast: bool = True) -> bool:
     code = code.strip().upper()
     if code in EXHAUSTED_CODES:
         return True
-    # Dual-check: Redis and Turso LibSQL
+    if fast:
+        return False
+    # Secondary check: Redis and Turso LibSQL (only on slow path / startup)
     try:
         if redis_command("SISMEMBER", "chickenland:exhausted_codes", code) == 1:
             EXHAUSTED_CODES.add(code)
