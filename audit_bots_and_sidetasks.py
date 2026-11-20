@@ -902,11 +902,17 @@ async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
                         return {"status": "Auth Failed ⚠️"}
                     u_info = client.user_data or {}
                     m_info = client.mining_data or {}
-                    bal = float(u_info.get("coin_balance", 0.0) or 0.0)
+                    wb = float(u_info.get("withdrawable_balance", 0.0) or 0.0)
+                    mb = float(u_info.get("mining_balance", 0.0) or 0.0)
+                    gb = float(u_info.get("gram_balance", 0.0) or 0.0)
+                    cb = float(u_info.get("coin_balance", 0.0) or 0.0)
+                    bal = wb if wb > 0 else (cb if cb > 0 else mb)
+                    total_bal = wb + mb + gb
                     m_active = bool(m_info.get("isActive"))
                     return {
-                        "status": f"Active: {bal:.4f} GRAM (Mining: {'Active' if m_active else 'Idle'})",
+                        "status": f"Active: {bal:.4f} GRAM (Total: {total_bal:.4f}, Mining: {'Active' if m_active else 'Idle'})",
                         "balance": bal,
+                        "total_balance": total_bal,
                         "mining_active": m_active
                     }
                 res_core = await loop.run_in_executor(None, _audit_hunter_sync)
