@@ -7,7 +7,7 @@ Calculates:
 - Total BNB farmed & withdrawn today
 - Real-time fiat valuation (USD $ and BDT ৳) via Binance API
 - Live On-Chain Wallet Balance from Binance Smart Chain
-- Cloudflare Edge Mini-App Yield (14 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, Victor's Company, AZM Miner, Dillo Miner, Hunter Miner, Cherry Play)
+- Cloudflare Edge Mini-App Yield (13 Active Mining Bots: ATF, Kynex, PepeGram, AdxEarn, Chicken Land, EarnVault, MexoEarn, MyAgeApp, Lifetime Energy, Victor's Company, Dillo Miner, Hunter Miner, Cherry Play)
 Broadcasts report to Telegram Payout Channel (-1004402765950) & Admin DM (6727787768).
 """
 
@@ -171,7 +171,6 @@ async def get_fleet_mining_totals() -> dict:
         "lifetime": 0.0,
         "cherry": 0.0,
         "victors": 0.0,
-        "azm": 0.0,
         "dillo": 0.0,
         "hunter": 0.0
     }
@@ -266,16 +265,7 @@ async def get_fleet_mining_totals() -> dict:
                                 m = re.search(r"([\d\.]+)\s*Coins?", core_str, re.IGNORECASE)
                                 if m: totals["victors"] += float(m.group(1))
 
-                        # 14. AZM Miner
-                        elif "azm" in b_name.lower() or "azmir" in b_name.lower():
-                            if isinstance(core, dict):
-                                try: totals["azm"] += float(core.get("balance", 0) or 0)
-                                except Exception: pass
-                            else:
-                                m = re.search(r"([\d\.]+)\s*AZM", core_str)
-                                if m: totals["azm"] += float(m.group(1))
-
-                        # 15. Dillo Miner
+                        # 14. Dillo Miner
                         elif "dillo" in b_name.lower():
                             if isinstance(core, dict):
                                 try: totals["dillo"] += float(core.get("balance", 0) or core.get("pool", 0) or 0)
@@ -321,8 +311,6 @@ async def get_fleet_mining_totals() -> dict:
                     totals["cherry"] = sum(float(a.get("cherry_balance", 0) or 0) for a in accs)
                 if totals["victors"] == 0.0:
                     totals["victors"] = sum(float(a.get("victors_balance", 0) or 0) for a in accs)
-                if totals["azm"] == 0.0:
-                    totals["azm"] = sum(float(a.get("azm_balance", 0) or 0) for a in accs)
                 if totals.get("dillo", 0.0) == 0.0:
                     totals["dillo"] = sum(float(a.get("dillo_balance", 0) or 0) for a in accs)
                 if totals.get("hunter", 0.0) == 0.0:
@@ -525,7 +513,6 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• *Lifetime Energy:* `{fleet_totals['lifetime']:,.0f} WATTS` (Power & Energy Production, Ad Rolls & Tasks)\n"
             f"• *Cherry Play:* `{fleet_totals.get('cherry', 0.0):,.0f} Cherries` (TON Tap Mining, Daily Streaks, Lucky Spins & Tasks)\n"
             f"• *Victor's Company:* `{fleet_totals['victors']:,.0f} Coins` (Autonomous Mining, Shifts & Referral Commissions)\n"
-            f"• *AZM Miner:* `{fleet_totals['azm']:,.2f} AZM` (TON Jetton Protocol, 15 AZM/h Active Mining, Streaks & Harvests)\n"
             f"• *Dillo Miner:* `{fleet_totals['dillo']:,.2f} DILLO` (TON Jetton Protocol, 2,400 DILLO/d Passive Farm, Energy Taps & Streaks)\n"
             f"• *Hunter Miner:* `{fleet_totals.get('hunter', 0.0):,.4f} GRAM` (TON Jetton Protocol, 12h Mining Cycles, Tasks & Instant TON Cashouts)\n"
             f"• *On-Chain Target TON:* `{TON_PRIMARY_WALLET}`\n"
