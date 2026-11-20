@@ -2477,7 +2477,11 @@ def _sync_sweep_hunter(uid: str, name: str, hunter_init: str, acc: dict) -> Dict
 
         u_info = client.user_data
         m_info = client.mining_data
-        bal = float(u_info.get("coin_balance", 0.0) or u_info.get("mining_balance", 0.0) or 0.0)
+        wb = float(u_info.get("withdrawable_balance", 0.0) or 0.0)
+        mb = float(u_info.get("mining_balance", 0.0) or 0.0)
+        gb = float(u_info.get("gram_balance", 0.0) or 0.0)
+        cb = float(u_info.get("coin_balance", 0.0) or 0.0)
+        bal = wb if wb > 0 else (cb if cb > 0 else mb)
 
         # 1. Welcome Bonus
         if not u_info.get("welcome_bonus_claimed"):
