@@ -571,7 +571,7 @@ async def run_audit_and_sweep(execute_sweep: bool = False, notify: bool = True):
     """Execute complete withdrawal readiness audit and optional sweep."""
     accounts = load_accounts()
     print("=" * 75)
-    print("📊 AAA AUTO FLEET — WITHDRAWAL READINESS AUDITOR (15 BOTS)")
+    print("📊 AAA AUTO FLEET — WITHDRAWAL READINESS AUDITOR (13 BOTS)")
     print(f"Auditing {len(accounts)} Accounts against Ground-Truth Thresholds...")
     print("=" * 75)
 
