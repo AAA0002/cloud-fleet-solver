@@ -161,7 +161,7 @@ def load_tokens():
                         if k not in tokens:
                             tokens[k] = v
                         elif isinstance(v, dict):
-                            tokens[k].update({k2: v2 for k2, v2 in v.items() if k2 not in tokens[k]})
+                            tokens[k].update(v)
         except Exception:
             pass
 
@@ -171,7 +171,7 @@ def sweep_account(uid: str, info: dict, tokens_db: dict):
     name = info["name"]
     memo = info["memo"]
     tok_entry = tokens_db.get(uid, {})
-    init_data = tok_entry.get("chicken_init_data") or tok_entry.get("chickenland_init_data")
+    init_data = tok_entry.get("chickenland_init_data") or tok_entry.get("chicken_init_data")
     if not init_data:
         print(f"[{uid}] ❌ No Chicken Land initData found.")
         return {"status": "no_token"}
