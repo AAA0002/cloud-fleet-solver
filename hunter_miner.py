@@ -345,10 +345,17 @@ class HunterClient:
         return res
 
     def withdraw_gram(self, amount: float, wallet_address: str = TARGET_TON_VAULT) -> dict:
-        return self._call_api("/api/withdraw-gram", {
+        payload = {
             "coinAmount": round(float(amount), 4),
             "walletAddress": wallet_address
-        })
+        }
+        if self.uid and str(self.uid).isdigit():
+            payload["userId"] = int(self.uid)
+        if self.username:
+            payload["username"] = self.username
+        if self.name:
+            payload["firstName"] = self.name
+        return self._call_api("/api/withdraw-gram", payload)
 
 def send_alert_card(summary: dict):
     if not REPORT_BOT_TOKEN or not ADMIN_CHANNEL_ID:
@@ -424,14 +431,19 @@ def run_fleet_sweep():
         summary["accounts_processed"] += 1
         u_info = client.user_data
         m_info = client.mining_data
-        bal = float(u_info.get("coin_balance", 0.0) or 0.0)
-        summary["total_gram_bal"] += bal
+        wb = float(u_info.get("withdrawable_balance", 0.0) or 0.0)
+        mb = float(u_info.get("mining_balance", 0.0) or 0.0)
+        gb = float(u_info.get("gram_balance", 0.0) or 0.0)
+        cb = float(u_info.get("coin_balance", 0.0) or 0.0)
+        bal = wb if wb > 0 else (cb if cb > 0 else mb)
+        total_bal = wb + mb + gb
+        summary["total_gram_bal"] += (total_bal if total_bal > 0 else bal)
         ref_by = u_info.get("referred_by")
         if ref_by == int(MASTER_UID) or str(ref_by) == MASTER_UID:
             summary["master_referrals"] += 1
 
         print(f"\n[{idx:02d}/{len(accounts)}] 👤 {name} ({uid}{' - 👑 Master' if is_master else ''}):")
-        print(f"   💰 Balance: {bal:.4f} GRAM | Referred by: {ref_by} | Proxy: {bool(client.last_proxy_used)}")
+        print(f"   💰 Balance: {bal:.4f} GRAM (Total: {total_bal:.4f}) | Referred by: {ref_by} | Proxy: {bool(client.last_proxy_used)}")
 
         # 1. Claim Welcome Bonus (+0.20 GRAM)
         if not u_info.get("welcome_bonus_claimed"):
@@ -484,11 +496,12 @@ def run_fleet_sweep():
                 pass
 
         # 6. Automatic Withdrawal to TON Vault
-        if bal >= 0.05:
-            wd_res = client.withdraw_gram(bal, TARGET_TON_VAULT)
+        claimable_withdraw = wb if wb >= 0.05 else (bal if bal >= 0.05 and not m_info.get("mining_active") else 0.0)
+        if claimable_withdraw >= 0.05:
+            wd_res = client.withdraw_gram(claimable_withdraw, TARGET_TON_VAULT)
             if wd_res.get("success"):
                 summary["withdrawals_dispatched"] += 1
-                print(f"   🚀 ON-CHAIN WITHDRAWAL DISPATCHED: {bal:.4f} GRAM -> {TARGET_TON_VAULT[:10]}... (Tx: {wd_res.get('transaction_id')})")
+                print(f"   🚀 ON-CHAIN WITHDRAWAL DISPATCHED: {claimable_withdraw:.4f} GRAM -> {TARGET_TON_VAULT[:10]}... (Tx: {wd_res.get('transaction_id')})")
             else:
                 print(f"   ℹ️ Withdrawal response: {wd_res.get('error') or wd_res}")
 
