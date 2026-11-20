@@ -2,11 +2,11 @@
 """
 finish_all_fleet_sidetasks.py
 =============================================================================
-COMPREHENSIVE 14-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
+COMPREHENSIVE 13-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
 =============================================================================
 Sweeps and completes all available side-tasks, daily check-ins, social joins,
 cooldown missions, wallet verifications, and referral commission claims across
-all dynamic accounts in the fleet for all 14 legitimate bots:
+all dynamic accounts in the fleet for all 13 legitimate bots:
   1. ATF Miner (@atfminers_bot)
   2. Kynex Network (@Kynex_miningbot)
   3. PepeGram (@Pepe_gram_bot)
@@ -19,6 +19,7 @@ all dynamic accounts in the fleet for all 14 legitimate bots:
   10. Cherry Play (@CherryPlayBot)
   11. Victor's Company (@Victors_Company_bot)
   12. Dillo Miner (@dillo_miner_bot)
+  13. Hunter Miner (@GramHtrsbot)
 
 Zero Phone Load (Rule 4): Runs once as a clean batch script in cloud/container,
 exits cleanly, and persists updated tokens to Upstash Redis and Cloudflare Edge.
@@ -1426,25 +1427,6 @@ async def sweep_mexoearn_tasks(session: aiohttp.ClientSession, uid: str, name: s
                 for t in tasks:
                     if not t.get("locked") and not t.get("requiresProof") and t.get("status") == "available":
                         tid = str(t.get("id"))
-                        # Ephemeral channel task: Auto-join, claim, then immediately leave and delete dialog
-                        t_cl = None
-                        ent_to_leave = None
-                        if t.get("requiresTelegramJoin") or tid == "2":
-                            ch_target = t.get("telegramChannelUsername") or "Mexoearn"
-                            if ch_target and acc.get("session_string"):
-                                try:
-                                    from telethon import TelegramClient
-                                    from telethon.sessions import StringSession
-                                    from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
-                                    t_api_id = int(os.getenv("API_ID") or os.getenv("TELEGRAM_API_ID") or 2040)
-                                    t_api_hash = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or "5cd9e5bbfb572a4429a0c54774153b47"
-                                    t_cl = TelegramClient(StringSession(acc["session_string"]), t_api_id, t_api_hash)
-                                    await t_cl.connect()
-                                    if await t_cl.is_user_authorized():
-                                        ent_to_leave = await t_cl.get_entity(ch_target)
-                                        await t_cl(JoinChannelRequest(ent_to_leave))
-                                except Exception:
-                                    pass
                         try:
                             delay = max(int(t.get("claimDelaySeconds", 5)) + 1, 3)
                             async with session.post(f"https://mexoearn.xyz/api/tasks/{tid}/start", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as rs:
@@ -1456,18 +1438,8 @@ async def sweep_mexoearn_tasks(session: aiohttp.ClientSession, uid: str, name: s
                                             if cd.get("ok"):
                                                 res["tasks_claimed"] += 1
                                                 res["notes"].append(f"task_{tid}")
-                        finally:
-                            # Strict Ephemeral Cleanup: Leave channel and purge dialog immediately
-                            if t_cl and ent_to_leave:
-                                try:
-                                    await t_cl(LeaveChannelRequest(ent_to_leave))
-                                    await t_cl.delete_dialog(ent_to_leave)
-                                except Exception:
-                                    pass
-                                try:
-                                    await t_cl.disconnect()
-                                except Exception:
-                                    pass
+                        except Exception:
+                            pass
 
         # Ads sweep (Watch & Earn + Multi-Network: Adsgram, Monetag, Gigapub)
         # 1. Watch & Earn
@@ -1597,27 +1569,6 @@ async def sweep_myage_tasks(session: aiohttp.ClientSession, uid: str, name: str,
                             for t in t_data.get("tasks", []):
                                 if not t.get("done"):
                                     tid = t.get("id")
-                                    # Ephemeral channel task: Auto-join channel via MTProto, claim, then immediately leave and delete dialog
-                                    t_cl = None
-                                    ent_to_leave = None
-                                    if t.get("kind") == "channel" and t.get("url") and acc.get("session_string"):
-                                        try:
-                                            ch_url = str(t.get("url", ""))
-                                            ch_uname = ch_url.replace("https://t.me/", "").replace("http://t.me/", "").split("/")[0].split("?")[0]
-                                            if ch_uname:
-                                                from telethon import TelegramClient
-                                                from telethon.sessions import StringSession
-                                                from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
-                                                t_api_id = int(os.getenv("API_ID") or os.getenv("TELEGRAM_API_ID") or 2040)
-                                                t_api_hash = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or "5cd9e5bbfb572a4429a0c54774153b47"
-                                                t_cl = TelegramClient(StringSession(acc["session_string"]), t_api_id, t_api_hash)
-                                                await t_cl.connect()
-                                                if await t_cl.is_user_authorized():
-                                                    ent_to_leave = await t_cl.get_entity(ch_uname)
-                                                    await t_cl(JoinChannelRequest(ent_to_leave))
-                                        except Exception:
-                                            pass
-
                                     try:
                                         needed = max(1, t.get("pressesRequired", 1) - t.get("presses", 0))
                                         for _ in range(needed):
@@ -1627,18 +1578,8 @@ async def sweep_myage_tasks(session: aiohttp.ClientSession, uid: str, name: str,
                                             await asyncio.sleep(0.3)
                                         res["tasks_claimed"] += 1
                                         res["notes"].append(f"task_{t.get('title', tid)[:15]}")
-                                    finally:
-                                        # Strict Ephemeral Cleanup: Leave channel and purge dialog immediately
-                                        if t_cl and ent_to_leave:
-                                            try:
-                                                await t_cl(LeaveChannelRequest(ent_to_leave))
-                                                await t_cl.delete_dialog(ent_to_leave)
-                                            except Exception:
-                                                pass
-                                            try:
-                                                await t_cl.disconnect()
-                                            except Exception:
-                                                pass
+                                    except Exception:
+                                        pass
                 except Exception:
                     pass
 
@@ -2069,8 +2010,8 @@ async def sweep_cherry_tasks(session: aiohttp.ClientSession, uid: str, name: str
         return res
     try:
         from cherry_miner import CherryClient
-        client = CherryClient(init_data=init_data, user_id=uid)
-        cycle_res = await client.run_full_farming_cycle()
+        client = CherryClient(uid=str(uid), name=name, init_data=init_data)
+        cycle_res = await client.run_full_farming_cycle(session)
         res["success"] = cycle_res.get("success", False)
         res["balance"] = cycle_res.get("balance", 0.0)
         res["streak"] = cycle_res.get("streak", 0)
@@ -2225,27 +2166,6 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
                             if not tid:
                                 continue
 
-                            # Ephemeral channel task: Auto-join via MTProto, claim, then leave and delete dialog immediately
-                            t_cl = None
-                            ent_to_leave = None
-                            if (t_kind == "telegram_channel" or "t.me/" in str(t_url)) and acc.get("session_string"):
-                                try:
-                                    ch_clean = str(t_url).replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").split("/")[0].split("?")[0]
-                                    if ch_clean and not ch_clean.isdigit():
-                                        from telethon import TelegramClient
-                                        from telethon.sessions import StringSession
-                                        from telethon.tl.functions.channels import JoinChannelRequest
-                                        t_api_id = int(os.getenv("API_ID") or os.getenv("TELEGRAM_API_ID") or 2040)
-                                        t_api_hash = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or "5cd9e5bbfb572a4429a0c54774153b47"
-                                        t_cl = TelegramClient(StringSession(acc["session_string"]), t_api_id, t_api_hash)
-                                        await t_cl.connect()
-                                        if await t_cl.is_user_authorized():
-                                            ent_to_leave = await t_cl.get_entity(ch_clean)
-                                            await t_cl(JoinChannelRequest(ent_to_leave))
-                                            await asyncio.sleep(0.5)
-                                except Exception as ex_j:
-                                    logger.debug(f"[{name}] Victor channel join note: {ex_j}")
-
                             try:
                                 await asyncio.sleep(0.3)
                                 async with session.post("https://server.victors.company/api/tasks/claim", headers=vic_h, json={"taskId": tid}, timeout=aiohttp.ClientTimeout(total=5)) as clm_r:
@@ -2254,16 +2174,8 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
                                         if c_data.get("success"):
                                             res["tasks_claimed"] += 1
                                             res["notes"].append(f"task_{tid}")
-                            finally:
-                                if t_cl and ent_to_leave:
-                                    try:
-                                        await t_cl.delete_dialog(ent_to_leave)
-                                    except Exception:
-                                        pass
-                                    try:
-                                        await t_cl.disconnect()
-                                    except Exception:
-                                        pass
+                            except Exception:
+                                pass
         except Exception:
             pass
 
@@ -2510,54 +2422,13 @@ def _sync_sweep_hunter(uid: str, name: str, hunter_init: str, acc: dict) -> Dict
                 for t in tasks:
                     t_id = t.get("id") or t.get("_id")
                     if not t.get("completed") and t_id:
-                        verif = t.get("verification", False)
-                        t_url = t.get("url", "")
-
-                        # Ephemeral channel task handling if verification required
-                        if verif and t_url and "t.me/" in t_url and acc.get("session_string"):
-                            try:
-                                ch_clean = t_url.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").split("/")[0].split("?")[0]
-                                if ch_clean and not ch_clean.isdigit():
-                                    import asyncio
-                                    async def _do_channel_task():
-                                        from telethon import TelegramClient
-                                        from telethon.sessions import StringSession
-                                        from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
-                                        from telethon.tl.functions.messages import DeleteHistoryRequest
-                                        t_api_id = int(os.getenv("API_ID") or os.getenv("TELEGRAM_API_ID") or 2040)
-                                        t_api_hash = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or "5cd9e5bbfb572a4429a0c54774153b47"
-                                        cl = TelegramClient(StringSession(acc["session_string"]), t_api_id, t_api_hash)
-                                        await cl.connect()
-                                        if await cl.is_user_authorized():
-                                            ent = await cl.get_entity(ch_clean)
-                                            await cl(JoinChannelRequest(ent))
-                                            await asyncio.sleep(1.0)
-                                            # Complete task
-                                            cmp = client.complete_task(str(t_id))
-                                            # Immediately Leave & Revoke/Purge
-                                            try:
-                                                await cl(LeaveChannelRequest(ent))
-                                                await cl(DeleteHistoryRequest(peer=ent, max_id=0, revoke=True))
-                                            except Exception:
-                                                pass
-                                            await cl.disconnect()
-                                            return cmp
-                                        await cl.disconnect()
-                                        return {}
-                                    cmp_res = asyncio.run(_do_channel_task())
-                                else:
-                                    cmp_res = client.complete_task(str(t_id))
-                            except Exception:
-                                cmp_res = client.complete_task(str(t_id))
-                        else:
-                            cmp_res = client.complete_task(str(t_id))
-
+                        cmp_res = client.complete_task(str(t_id))
                         if cmp_res.get("success"):
                             r_amt = cmp_res.get("reward", 0.002)
                             bal += r_amt
                             res["tasks_claimed"] += 1
                             res["notes"].append(f"task_{t_id}")
-                            time.sleep(3.5)
+                            time.sleep(1.0)
             except Exception:
                 pass
 
