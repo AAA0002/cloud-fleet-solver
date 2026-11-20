@@ -18,9 +18,8 @@ against official, ground-truth payout thresholds:
 9. AdxEarn AI: >= 70,000 Points ($7.00 USD) -> BEP20 USDT to Master EVM Vault
 10. ATF Miner: >= 10,000 ATF (fee: 70 ATF) -> On-chain TON withdrawal
 11. Victor's Company: Shifts & 10% crew mining commissions swept to Master Account
-12. AZM Miner: >= 10,000 AZM -> On-chain TON withdrawal to dedicated TON wallet
-13. Dillo Miner: >= 2,400,000 DILLO -> Jetton withdrawal to dedicated TON wallet
-14. Hunter Miner: >= 0.05 GRAM -> Mining claim to Master TON Vault
+12. Dillo Miner: >= 2,400,000 DILLO -> Jetton withdrawal to dedicated TON wallet
+13. Hunter Miner: >= 0.05 GRAM -> Mining claim to Master TON Vault
 
 Complies with:
 - Rule 4: Zero Phone Load Directive (100% Cloud Execution)
@@ -140,13 +139,6 @@ WITHDRAWAL_THRESHOLDS = {
         "threshold": 1500.0,
         "action": "On-chain withdrawal to bound TON wallet (min 1,500 VICX)",
         "unit": "VICX"
-    },
-    "azm": {
-        "name": "AZM Miner",
-        "symbol": "AZM",
-        "threshold": 10000.0,
-        "action": "Withdraw AZM via /api/withdraw to dedicated TON wallet",
-        "unit": "AZM"
     },
     "dillo": {
         "name": "Dillo Miner",
@@ -508,36 +500,6 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             }
             if is_ready:
                 report["ready_to_withdraw"].append(("victors", vic_bal, "VICX"))
-        except Exception:
-            pass
-
-    # 13. AZM Miner
-    azm_init = tokens.get("azm_init_data") or tokens.get("azm") or tokens.get("azmir")
-    if azm_init:
-        try:
-            h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0"}
-            azm_base = tokens.get("azm_api_base") or os.getenv("AZM_API_BASE", "https://amd-dot-thin-resident.trycloudflare.com/api").rstrip("/")
-            if UPSTASH_URL and UPSTASH_TOKEN and "trycloudflare" in azm_base:
-                try:
-                    async with session.get(f"{UPSTASH_URL}/get/fleet:azm_api_base", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=2)) as r_b:
-                        if r_b.status == 200:
-                            b_val = (await r_b.json()).get("result")
-                            if b_val and isinstance(b_val, str) and b_val.startswith("http"):
-                                azm_base = b_val.strip().rstrip("/")
-                except Exception:
-                    pass
-            async with session.get(f"{azm_base}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
-                if ar.status == 200:
-                    d = await ar.json()
-                    balance = float(d.get("balance", 0.0) or 0.0)
-                    threshold = float(d.get("min_wd", 10000.0) or 10000.0)
-                    is_ready = balance >= threshold and bool(d.get("wallet"))
-                    report["protocols"]["azm"] = {
-                        "balance": balance, "threshold": threshold, "unit": "AZM",
-                        "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1)) if threshold > 0 else 0
-                    }
-                    if is_ready:
-                        report["ready_to_withdraw"].append(("azm", balance, "AZM"))
         except Exception:
             pass
 
