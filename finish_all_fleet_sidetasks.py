@@ -2461,21 +2461,38 @@ def _sync_sweep_hunter(uid: str, name: str, hunter_init: str, acc: dict) -> Dict
                 res["tasks_claimed"] += 1
                 res["notes"].append("welcome_+0.20")
 
-        # 2. Claim Finished Mining
+        # 2. Mining Lifecycle: Stop -> Claim -> Start
+        if m_info.get("needs_stop"):
+            stop_res = client.stop_mining()
+            if stop_res.get("success"):
+                m_info = client.mining_data
+
         if m_info.get("can_claim"):
             cl_res = client.claim_mining()
             if cl_res.get("success"):
-                c_amt = cl_res.get("mined_coins", 0)
+                c_amt = cl_res.get("claimed", 0) or cl_res.get("mined_coins", 0)
                 bal += c_amt
+                m_info = client.mining_data
                 res["tasks_claimed"] += 1
                 res["notes"].append(f"mined_+{c_amt:.4f}")
 
         # 3. Start 12h Mining
-        if not m_info.get("mining_active") and m_info.get("can_start_mining", True):
+        if m_info.get("can_start_mining") or (not m_info.get("mining_active") and m_info.get("can_start_mining", True)):
             st_res = client.start_mining()
             if st_res.get("success"):
+                m_info = client.mining_data
                 res["tasks_claimed"] += 1
                 res["notes"].append("mining_started")
+
+        # 3.5 Claim Quests
+        for q_type in ["task", "referral", "miner"]:
+            try:
+                q_res = client.claim_quest(q_type)
+                if q_res.get("success"):
+                    res["tasks_claimed"] += 1
+                    res["notes"].append(f"quest_{q_type}")
+            except Exception:
+                pass
 
         # 4. Master Referral Earnings
         if uid == MASTER_UID:
@@ -2544,8 +2561,8 @@ def _sync_sweep_hunter(uid: str, name: str, hunter_init: str, acc: dict) -> Dict
             except Exception:
                 pass
 
-        # 6. Automatic Withdrawal to TON Vault
-        if bal >= 0.05:
+        # 6. Automatic Withdrawal to TON Vault (Upstream minimum: 0.50 GRAM)
+        if bal >= 0.50:
             target_vault = PRIMARY_TON_WALLET
             wd_res = client.withdraw_gram(bal, target_vault)
             if wd_res.get("success"):
