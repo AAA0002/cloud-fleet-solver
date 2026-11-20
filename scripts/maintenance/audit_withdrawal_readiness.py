@@ -150,7 +150,7 @@ WITHDRAWAL_THRESHOLDS = {
     "hunter": {
         "name": "Hunter Miner",
         "symbol": "GRAM",
-        "threshold": 0.05,
+        "threshold": 0.50,
         "action": "Instant on-chain cashout to Master TON Vault",
         "unit": "GRAM"
     }
