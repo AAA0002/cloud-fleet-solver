@@ -123,19 +123,32 @@ def load_fleet_accounts() -> List[Dict[str, Any]]:
 
 
 async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict[str, Any]:
-    """Retrieve all cached WebApp tokens for an account from Upstash Redis."""
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return {}
-    url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
-    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+    """Retrieve all cached WebApp tokens for an account from Upstash Redis or local cache."""
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
+        headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+        try:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    raw = (await resp.json()).get("result")
+                    if raw:
+                        parsed = robust_json_loads(raw)
+                        if parsed:
+                            return parsed
+        except Exception:
+            pass
+
+    # Local file fallback
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-            if resp.status == 200:
-                raw = (await resp.json()).get("result")
-                if raw:
-                    return robust_json_loads(raw)
+        local_toks_path = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
+        if os.path.exists(local_toks_path):
+            with open(local_toks_path) as f:
+                all_toks = json.load(f)
+                if str(uid) in all_toks:
+                    return all_toks[str(uid)]
     except Exception:
         pass
+
     return {}
 
 
