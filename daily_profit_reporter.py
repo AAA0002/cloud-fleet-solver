@@ -287,7 +287,12 @@ async def get_fleet_mining_totals() -> dict:
                         # 16. Hunter Miner
                         elif "hunter" in b_name.lower():
                             if isinstance(core, dict):
-                                try: totals["hunter"] += float(core.get("balance", 0) or core.get("coin_balance", 0) or 0)
+                                try:
+                                    wb = float(core.get("withdrawable_balance", 0) or 0)
+                                    mb = float(core.get("mining_balance", 0) or 0)
+                                    gb = float(core.get("gram_balance", 0) or 0)
+                                    b = float(core.get("balance", 0) or core.get("coin_balance", 0) or 0)
+                                    totals["hunter"] += (wb + mb + gb) if (wb + mb + gb) > 0 else b
                                 except Exception: pass
                             else:
                                 m = re.search(r"([\d\.]+)\s*GRAM", core_str)
