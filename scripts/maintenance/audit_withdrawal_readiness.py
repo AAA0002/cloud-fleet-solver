@@ -88,8 +88,8 @@ WITHDRAWAL_THRESHOLDS = {
     "earnvault": {
         "name": "EarnVault",
         "symbol": "USD",
-        "threshold": 1.0,
-        "action": "Cashout to BEP20 USDT to Master EVM Vault",
+        "threshold": 5.0,
+        "action": "Cashout to BEP20 USDT (min $5.00, Mon-Fri 15-16 UTC)",
         "unit": "USD"
     },
     "cherry": {
@@ -137,8 +137,8 @@ WITHDRAWAL_THRESHOLDS = {
     "victors": {
         "name": "Victor's Company",
         "symbol": "VICX",
-        "threshold": 5.0,
-        "action": "Claim shift & 10% crew recruitment commission",
+        "threshold": 1500.0,
+        "action": "On-chain withdrawal to bound TON wallet (min 1,500 VICX)",
         "unit": "VICX"
     },
     "azm": {
@@ -583,17 +583,22 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             client = HunterClient(str(uid), acc.get("name", ""), hunter_init or "", username=acc.get("username", ""), jwt_token=hunter_jwt or "")
             if client.authenticate():
                 u_info = client.user_data
-                balance = float(u_info.get("coin_balance", 0.0) or 0.0)
+                balance = float(u_info.get("withdrawable_balance", 0.0) or u_info.get("gram_balance", 0.0) or u_info.get("coin_balance", 0.0) or 0.0)
                 threshold = WITHDRAWAL_THRESHOLDS["hunter"]["threshold"]
                 is_ready = balance >= threshold
+                m_act = bool(u_info.get("mining_active"))
                 report["protocols"]["hunter"] = {
                     "balance": balance, "threshold": threshold, "unit": "GRAM",
-                    "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1)) if threshold > 0 else 0
+                    "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1)) if threshold > 0 else 0,
+                    "mining_active": m_act
                 }
                 if is_ready:
-                    report["ready_to_withdraw"].append(("hunter", balance, "GRAM"))
-                    if execute_sweep:
-                        client.withdraw_gram(balance, MASTER_TON_VAULT)
+                    if m_act:
+                        report["upstream_paused_claims"].append(("hunter", balance, "GRAM"))
+                    else:
+                        report["ready_to_withdraw"].append(("hunter", balance, "GRAM"))
+                        if execute_sweep:
+                            client.withdraw_gram(balance, MASTER_TON_VAULT)
         except Exception:
             pass
 
@@ -638,6 +643,8 @@ async def run_audit_and_sweep(execute_sweep: bool = False, notify: bool = True):
                 reason = "First free payout completed; upstream deposit verification required"
             elif bot_id == "kynex":
                 reason = "Upstream cashouts disabled by bot team pending TGE - HTTP 503"
+            elif bot_id == "hunter":
+                reason = "12h mining session in progress; cashout dispatches upon session completion"
             else:
                 reason = "Upstream cashouts paused by bot team"
             print(f"  ⏸️ [{name}] {p_name}: {bal:.2f} {unit} ({reason})")
