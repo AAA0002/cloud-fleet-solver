@@ -231,6 +231,65 @@ class CherryClient:
             res3 = await self.call_api(session, "/wallet", body={"method": "usdt_bep20", "addr": bsc_addr}, method="POST")
         return res1 or res2 or res3 or {}
 
+    async def execute_withdrawal(self, session: aiohttp.ClientSession, method: str = "usdt_ton") -> Dict[str, Any]:
+        """
+        Executes on-chain cashout from Cherry Play (/api/withdraw).
+        Validates minimum balance (8,000 🍒 = $0.08 USD), plays prerequisite short ad (/ads/start & complete),
+        and submits the payout request to the account's bound TON or BSC vault.
+        """
+        b_data = await self.bootstrap(session)
+        if not b_data or b_data.get("error"):
+            return {"success": False, "error": "bootstrap_failed"}
+
+        cfg = b_data.get("config", {})
+        min_w = float(cfg.get("min_withdraw", 8000) or 8000)
+        withdraw_on = cfg.get("withdraw_on", True)
+        if not withdraw_on:
+            return {"success": False, "error": "withdrawals_paused_by_server"}
+
+        user = b_data.get("user", {})
+        bal = float(user.get("balance", 0) or 0)
+        if bal < min_w:
+            return {"success": False, "error": f"below_threshold_{bal}_{min_w}"}
+
+        addrs = user.get("addresses", {})
+        if not addrs.get(method):
+            if self.ton_wallet:
+                await self.bind_ton_wallet(session, self.ton_wallet)
+                addrs[method] = self.ton_wallet
+            else:
+                return {"success": False, "error": f"no_address_saved_for_{method}"}
+
+        ads_cfg = b_data.get("ads", {})
+        if ads_cfg.get("withdraw_ads", 1) > 0:
+            try:
+                st = await self.call_api(session, "/ads/start", body={"placement": "withdraw"}, method="POST")
+                if st and not st.get("error"):
+                    ad_tok = st.get("token")
+                    min_watch = int(st.get("min_watch", 5) or 5)
+                    await asyncio.sleep(max(min_watch + 1, 6))
+                    await self.call_api(session, "/ads/complete", body={"token": ad_tok, "shown": 1, "clicks": 1}, method="POST")
+            except Exception:
+                pass
+
+        wd_amount = int(bal // 100) * 100
+        if wd_amount < min_w:
+            wd_amount = int(min_w)
+
+        res = await self.call_api(session, "/withdraw", body={"amount": wd_amount, "method": method}, method="POST")
+        if res and not res.get("error") and res.get("withdrawal"):
+            w_info = res.get("withdrawal", {})
+            return {
+                "success": True,
+                "tx_id": w_info.get("id"),
+                "amount": wd_amount,
+                "usd": w_info.get("usd", 0.08),
+                "address": w_info.get("address", addrs.get(method)),
+                "net": w_info.get("net", method),
+                "status": w_info.get("status", "pending")
+            }
+        return {"success": False, "error": res.get("error") if res else "withdraw_request_failed"}
+
     async def unlock_pending_reward(self, session: aiohttp.ClientSession, pending_item: Dict[str, Any]) -> bool:
         """Unlocks and claims pending arcade/spin reward by watching required short rewarded ad."""
         pid = pending_item.get("id")

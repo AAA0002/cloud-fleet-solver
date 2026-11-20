@@ -94,8 +94,8 @@ WITHDRAWAL_THRESHOLDS = {
     "cherry": {
         "name": "Cherry Play",
         "symbol": "CHERRY",
-        "threshold": 100.0,
-        "action": "Withdraw CHERRY yields to bound TON wallet",
+        "threshold": 8000.0,
+        "action": "Cashout $0.08+ USDT/GRAM via /api/withdraw to TON vault",
         "unit": "🍒"
     },
     "mexo": {

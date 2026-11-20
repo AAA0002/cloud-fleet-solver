@@ -524,7 +524,7 @@ async def sweep_victors_company(session: aiohttp.ClientSession, uid: str, name: 
 
 
 async def sweep_cherry_play(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
-    """Cherry Play: Claim referral earnings, daily streak bonus, spin wheel, and bind TON wallet."""
+    """Cherry Play (@CherryPlayBot): Autonomous cashout to TON/BSC vault via /api/withdraw."""
     cherry_init = tokens.get("cherry_init_data") or tokens.get("cherry") or tokens.get("cherryplay_init_data")
     if not cherry_init:
         return None
@@ -532,13 +532,30 @@ async def sweep_cherry_play(session: aiohttp.ClientSession, uid: str, name: str,
     try:
         from cherry_miner import CherryClient
         client = CherryClient(uid, name, cherry_init, ton_wallet=ton_addr or MASTER_TON_VAULT)
-        res = await client.run_full_farming_cycle(session)
-        if res and res.get("claimed_referral", 0) > 0:
-            amt = float(res.get("claimed_referral", 0))
+        # 1. Run farming cycle to maximize balance and clear pending rewards
+        farm_res = await client.run_full_farming_cycle(session)
+
+        # 2. Check balance against minimum withdrawal threshold (8,000 🍒 = $0.08)
+        wd_res = await client.execute_withdrawal(session, method="usdt_ton")
+        if wd_res and wd_res.get("success"):
+            amt = wd_res.get("amount", 0)
+            usd_val = wd_res.get("usd", 0.08)
+            target_addr = wd_res.get("address", ton_addr or MASTER_TON_VAULT)
+            await record_payout_receipt("Cherry Play", "USDT", usd_val, target_addr, uid, name)
+            return {
+                "protocol": "Cherry Play",
+                "amount": amt,
+                "usd": usd_val,
+                "symbol": "USDT",
+                "recipient": target_addr,
+                "tx_id": wd_res.get("tx_id")
+            }
+        elif farm_res and farm_res.get("claimed_referral", 0) > 0:
+            amt = float(farm_res.get("claimed_referral", 0))
             await record_payout_receipt("Cherry Play", "🍒", amt, ton_addr or "Cherry Balance", uid, name)
             return {"protocol": "Cherry Play", "amount": amt, "symbol": "🍒", "recipient": ton_addr or "Cherry Balance"}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[Cherry Play Withdrawal] Error for {name}: {e}")
     return None
 
 
