@@ -481,39 +481,41 @@ async def generate_and_send_report(dry_run: bool = False):
                 pass
 
         report = (
-            f"📊 *[MY AGY AI — Daily Financial & Fleet Ledger]*\n"
-            f"📅 *Timestamp:* `{now_str}`\n\n"
-            f"🟡 *1. Binance Smart Chain (BEP-20 / Master Vault):*\n"
-            f"• *Fleet Size:* `{total_accounts} Accounts` active in parallel cloud mesh\n"
-            f"• *Master Vault Wallet:* `{WALLET_ADDRESS}`\n"
-            f"• *Live On-Chain Balance:* `{wallet_bnb:.6f} BNB` (`~${wallet_usd:.2f} USD` / `~৳{wallet_bdt:.0f} BDT`)\n"
-            f"• *Historical Distributions:* `{total_payouts_count} payouts` totaling `{total_payouts_bnb:.6f} BNB`\n"
-            f"• *Live BNB Price:* `${bnb_price:.2f} USD`\n\n"
-            f"💎 *2. Multi-Chain 15-Bot Autonomous Mining Treasury:*\n"
-            f"• *ATF Miner:* `{fleet_totals['atf']:,.2f} ATF` mined (Levels up to 160+, Deterministic Math Solver)\n"
-            f"• *Kynex Network:* `{fleet_totals['knx']:,.2f} KNX` mined (Firebase RTDB Node Auto-Claim)\n"
-            f"• *PepeGram:* `{fleet_totals['pepe']:,.2f} PEPE` mined (6h Cycles & Power Boosts)\n"
-            f"• *AdxEarn AI:* `{fleet_totals['adx']:,.0f} Points` earned (Daily Check-in Streaks & Tasks)\n"
-            f"• *Chicken Land:* `{fleet_totals['chicken_hens']} Hens` active laying `{fleet_totals['chicken_eggs']:,} Eggs` (Autonomous Egg Harvest & Selling)\n"
-            f"• *EarnVault:* `${fleet_totals['earnvault']:,.2f} USD` accumulated (Firebase Gate & Rewarded Ads)\n"
-            f"• *MexoEarn:* `{fleet_totals['mexo']:,.0f} MXO` earned (Shortlinks & High-Yield Quests)\n"
-            f"• *MyAgeApp:* `{fleet_totals['myage']:,.0f} AGE` accumulated (Telegram Age Valuation, Hourly Vault & Spins)\n"
-            f"• *Lifetime Energy:* `{fleet_totals['lifetime']:,.0f} WATTS` (Power & Energy Production, Ad Rolls & Tasks)\n"
-            f"• *Victor's Company:* `{fleet_totals['victors']:,.0f} Coins` (Autonomous Mining, Shifts & Referral Commissions)\n"
-            f"• *Dillo Miner:* `{fleet_totals['dillo']:,.2f} DILLO` (TON Jetton Protocol, 2,400 DILLO/d Passive Farm, Energy Taps & Streaks)\n"
-            f"• *Hunter Miner:* `{fleet_totals.get('hunter', 0.0):,.4f} GRAM` (TON Jetton Protocol, 12h Mining Cycles, Tasks & Instant TON Cashouts)\n"
-            f"• *On-Chain Target TON:* `{TON_PRIMARY_WALLET}`\n"
-            f"• *Live On-Chain TON Balance:* `{wallet_ton:.4f} TON` (`~${wallet_ton_usd:.2f} USD` / `~৳{wallet_ton_bdt:.0f} BDT`)\n"
-            f"• *TON Price (TonAPI):* `${ton_price:.2f} USD`\n\n"
-            f"🛡️ *3. Cloud Infrastructure & 100% Free Edge Mesh:*\n"
-            f"• *Cloudflare 5x Mesh:* APAC + Global edge nodes (Nodes 1, 2, 3, 4, 5)\n"
-            f"• *Cloudflare Workers AI:* Serverless Llama 3.2 & DeepSeek R1 edge intelligence (0 keys)\n"
-            f"• *Cloudflare D1 & R2:* Serverless SQL audit trail & zero-egress backup storage\n"
-            f"• *Render Standby:* {active_render_label}\n"
-            f"• *Supabase & Upstash:* Cloud PostgreSQL + Redis live state replication\n\n"
-            f"🤖 *4. AI Fleet Intelligence & Strategy (Cloudflare Workers AI):*\n"
-            f"_{ai_briefing}_\n\n"
-            f"🔗 [BscScan On-Chain Explorer](https://bscscan.com/address/{WALLET_ADDRESS}) • [Tonviewer Master Vault](https://tonviewer.com/{TON_PRIMARY_WALLET})"
+            f"📊 <b>[MY AGY AI — Daily Financial & Fleet Ledger]</b>\n"
+            f"📅 <b>Timestamp:</b> <code>{now_str}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🟡 <b>1. Binance Smart Chain (BEP-20 / Master Vault):</b>\n"
+            f"• <b>Fleet Size:</b> <code>{total_accounts} Accounts</code> active in parallel cloud mesh\n"
+            f"• <b>Master Vault Wallet:</b> <code>{WALLET_ADDRESS}</code>\n"
+            f"• <b>Live On-Chain Balance:</b> <code>{wallet_bnb:.6f} BNB</code> (<code>~${wallet_usd:.2f} USD</code> / <code>~৳{wallet_bdt:.0f} BDT</code>)\n"
+            f"• <b>Historical Distributions:</b> <code>{total_payouts_count} payouts</code> totaling <code>{total_payouts_bnb:.6f} BNB</code>\n"
+            f"• <b>Live BNB Price:</b> <code>${bnb_price:.2f} USD</code>\n\n"
+            f"💎 <b>2. Multi-Chain 12-Bot Autonomous Mining Treasury:</b>\n"
+            f"• 🪙 <b>ATF Miner:</b> <code>{fleet_totals['atf']:,.2f} ATF</code> mined (Levels up to 160+, Deterministic Math Solver)\n"
+            f"• 🌐 <b>Kynex Network:</b> <code>{fleet_totals['knx']:,.2f} KNX</code> mined (Firebase RTDB Node Auto-Claim)\n"
+            f"• 🐸 <b>PepeGram:</b> <code>{fleet_totals['pepe']:,.2f} PEPE</code> mined (6h Cycles & Power Boosts)\n"
+            f"• 🤖 <b>AdxEarn AI:</b> <code>{fleet_totals['adx']:,.0f} Points</code> earned (Daily Check-in Streaks & Tasks)\n"
+            f"• 🐔 <b>Chicken Land:</b> <code>{fleet_totals['chicken_hens']} Hens</code> active laying <code>{fleet_totals['chicken_eggs']:,} Eggs</code> (Autonomous Egg Harvest & Selling)\n"
+            f"• 🏦 <b>EarnVault:</b> <code>${fleet_totals['earnvault']:,.2f} USD</code> accumulated (Firebase Gate & Rewarded Ads)\n"
+            f"• ⚡ <b>MexoEarn:</b> <code>{fleet_totals['mexo']:,.0f} MXO</code> earned (Shortlinks & High-Yield Quests)\n"
+            f"• 🎂 <b>MyAgeApp:</b> <code>{fleet_totals['myage']:,.0f} AGE</code> accumulated (Telegram Age Valuation, Hourly Vault & Spins)\n"
+            f"• 🔋 <b>Lifetime Energy:</b> <code>{fleet_totals['lifetime']:,.0f} WATTS</code> (Power & Energy Production, Ad Rolls & Tasks)\n"
+            f"• 🏢 <b>Victor's Company:</b> <code>{fleet_totals['victors']:,.0f} Coins</code> (Autonomous Mining, Shifts & Referral Commissions)\n"
+            f"• ⛏️ <b>Dillo Miner:</b> <code>{fleet_totals['dillo']:,.2f} DILLO</code> (TON Jetton Protocol, 2,400 DILLO/d Passive Farm, Energy Taps & Streaks)\n"
+            f"• 🎯 <b>Hunter Miner:</b> <code>{fleet_totals.get('hunter', 0.0):,.4f} GRAM</code> (TON Jetton Protocol, 12h Mining Cycles, Tasks & Instant TON Cashouts)\n"
+            f"• 💎 <b>On-Chain Target TON:</b> <code>{TON_PRIMARY_WALLET}</code>\n"
+            f"• 💎 <b>Live On-Chain TON Balance:</b> <code>{wallet_ton:.4f} TON</code> (<code>~${wallet_ton_usd:.2f} USD</code> / <code>~৳{wallet_ton_bdt:.0f} BDT</code>)\n"
+            f"• 💎 <b>TON Price (TonAPI):</b> <code>${ton_price:.2f} USD</code>\n\n"
+            f"🛡️ <b>3. Cloud Infrastructure & 100% Free Edge Mesh:</b>\n"
+            f"• <b>Cloudflare 5x Mesh:</b> APAC + Global edge nodes (Nodes 1, 2, 3, 4, 5)\n"
+            f"• <b>Cloudflare Workers AI:</b> Serverless Llama 3.2 & DeepSeek R1 edge intelligence\n"
+            f"• <b>Cloudflare D1 & R2:</b> Serverless SQL audit trail & zero-egress backup storage\n"
+            f"• <b>Render Standby:</b> <code>{active_render_label}</code>\n"
+            f"• <b>Turso & Supabase:</b> LibSQL Primary SSOT + PostgreSQL live state replication\n\n"
+            f"🤖 <b>4. AI Fleet Intelligence & Strategy (Cloudflare Workers AI):</b>\n"
+            f"<i>{ai_briefing}</i>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔗 <a href=\"https://bscscan.com/address/{WALLET_ADDRESS}\">BscScan On-Chain Explorer</a> • <a href=\"https://tonviewer.com/{TON_PRIMARY_WALLET}\">Tonviewer Master Vault</a>"
         )
         
         markup = {
@@ -540,8 +542,9 @@ async def generate_and_send_report(dry_run: bool = False):
             async with session.post(send_url, json={
                 "chat_id": PAYOUT_CHANNEL_ID,
                 "text": report,
-                "parse_mode": "Markdown",
-                "reply_markup": markup
+                "parse_mode": "HTML",
+                "reply_markup": markup,
+                "disable_web_page_preview": True
             }, timeout=aiohttp.ClientTimeout(total=8)) as r:
                 print(f"[Daily Reporter] Sent to channel: {r.status}")
         except Exception as e:
@@ -552,8 +555,9 @@ async def generate_and_send_report(dry_run: bool = False):
             async with session.post(send_url, json={
                 "chat_id": ADMIN_ID,
                 "text": report,
-                "parse_mode": "Markdown",
-                "reply_markup": markup
+                "parse_mode": "HTML",
+                "reply_markup": markup,
+                "disable_web_page_preview": True
             }, timeout=aiohttp.ClientTimeout(total=8)) as r:
                 print(f"[Daily Reporter] Sent to admin: {r.status}")
         except Exception as e:
@@ -563,11 +567,14 @@ async def generate_and_send_report(dry_run: bool = False):
         admin_notif_channel = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
         if admin_notif_channel:
             short_ledger = (
-                f"📊 <b>Daily Fleet Financial Ledger</b>\n"
-                f"• <b>Fleet Scale:</b> <code>{total_accounts} Accounts • 15/15 Bots</code>\n"
-                f"• <b>Treasury Vault:</b> <code>{wallet_bnb:.6f} BNB</code> (${wallet_usd:.2f}) • <code>{wallet_ton:.4f} TON</code> (${wallet_ton_usd:.2f})\n"
-                f"• <b>Combined Vault:</b> ~${wallet_usd + wallet_ton_usd:.2f} USD (~৳{wallet_bdt + wallet_ton_bdt:.0f} BDT)\n"
-                f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
+                f"📊 <b>AAA AUTO — DAILY FINANCIAL & TREASURY LEDGER</b> 💎\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👥 <b>Fleet Scale:</b> <code>{total_accounts} Accounts • 12 Active Mining Bots</code> 🟢\n"
+                f"🟡 <b>BSC Vault:</b> <code>{wallet_bnb:.6f} BNB</code> (<code>${wallet_usd:.2f} USD</code>)\n"
+                f"💎 <b>TON Vault:</b> <code>{wallet_ton:.4f} TON</code> (<code>${wallet_ton_usd:.2f} USD</code>)\n"
+                f"💰 <b>Combined Treasury:</b> <b>~${wallet_usd + wallet_ton_usd:.2f} USD</b> (<code>~৳{wallet_bdt + wallet_ton_bdt:,.0f} BDT</code>) ✅\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🛡️ <b>Status:</b> 🟢 100% On-Chain Ground-Truth Synced"
             )
             try:
                 await session.post(send_url, json={
