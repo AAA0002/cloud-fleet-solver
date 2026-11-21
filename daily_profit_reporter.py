@@ -60,16 +60,23 @@ from turso_mesh import turso_get, turso_set
 TONAPI_KEY = os.getenv("TONAPI_KEY", "AGCD63WTWLGKKWYAAAAKRKZU45HTYMDI3PV7UBKKL6QDVIHG54NQDVNSQF7W3LQJ3X77QKY")
 
 async def get_live_rates(session: aiohttp.ClientSession) -> dict:
-    rates = {"bnb": 750.0, "ton": 1.60, "arb": 0.21, "bdt": 122.50}
-    try:
-        async with session.get("https://data-api.binance.vision/api/v3/ticker/price?symbol=BNBUSDT", timeout=aiohttp.ClientTimeout(total=4)) as r:
-            if r.status == 200:
-                rates["bnb"] = float((await r.json()).get("price", 750.0))
-        async with session.get("https://data-api.binance.vision/api/v3/ticker/price?symbol=ARBUSDT", timeout=aiohttp.ClientTimeout(total=4)) as r:
-            if r.status == 200:
-                rates["arb"] = float((await r.json()).get("price", 0.21))
-    except Exception:
-        pass
+    rates = {
+        "bnb": 750.0,
+        "ton": 1.60,
+        "arb": 0.21,
+        "btc": 60000.0,
+        "sol": 70.0,
+        "pepe": 0.0000035,
+        "bdt": 122.50
+    }
+    symbols = [("BNBUSDT", "bnb"), ("ARBUSDT", "arb"), ("BTCUSDT", "btc"), ("SOLUSDT", "sol"), ("PEPEUSDT", "pepe")]
+    for sym, key in symbols:
+        try:
+            async with session.get(f"https://data-api.binance.vision/api/v3/ticker/price?symbol={sym}", timeout=aiohttp.ClientTimeout(total=4)) as r:
+                if r.status == 200:
+                    rates[key] = float((await r.json()).get("price", rates[key]))
+        except Exception:
+            pass
 
     # Use TonAPI.io for accurate live TON price
     if TONAPI_KEY:
