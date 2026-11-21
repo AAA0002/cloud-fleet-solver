@@ -11,7 +11,7 @@ FULLY AUTONOMOUS FLEET ACCOUNT LIFECYCLE, WALLET PROVISIONING & BOT RECONCILER
      for brand-new accounts.
    - Automatically provisions and binds fleet emails (aaa.support.a+{index}@gmail.com).
 2. Atomic Multi-Store Synchronization:
-   - Synchronizes across accounts.json, fleet_*_wallets.json, Upstash Redis
+   - Synchronizes across accounts.json, fleet_*_wallets.json, Turso LibSQL Primary SSOT
      (fleet:accounts, account:{uid}), and immediately regenerates fleet:live_state.
 3. Autonomous Bot Wallet Connector & Mining Activator:
    - Connects TON wallet to all bots that require a connected wallet:
@@ -106,9 +106,9 @@ def find_any_existing_account_wallets(user_id=None, phone=None, index=None) -> T
     Exhaustively searches all local and cloud storage locations for existing account wallets.
     Checks:
       1. Local fleet_*_wallets.json files
-      2. Upstash Redis fleet:wallets_vault:{uid} and fleet:wallets_vault:index_{idx}
+      2. Turso LibSQL fleet:wallets_vault:{uid} and fleet:wallets_vault:index_{idx}
       3. fleet_wallet_provisioner static registry
-      4. accounts.json & Upstash fleet:accounts
+      4. accounts.json & Turso fleet:accounts
     Returns (index, wallet_suite, name, email) or (None, None, None, None).
     """
     uid_str = str(user_id) if user_id else ""
@@ -146,21 +146,21 @@ def find_any_existing_account_wallets(user_id=None, phone=None, index=None) -> T
             if suite["ton"].get("address"):
                 return found_idx, suite, found_name, None
 
-    # C. Check Upstash Redis Vaults
+    # C. Check Turso LibSQL Vaults
     if uid_str:
-        v_uid = upstash_get(f"fleet:wallets_vault:{uid_str}")
+        v_uid = turso_get(f"fleet:wallets_vault:{uid_str}")
         if v_uid and isinstance(v_uid, dict) and v_uid.get("wallets"):
             w_suite = v_uid["wallets"]
             return v_uid.get("index"), w_suite, v_uid.get("name"), v_uid.get("email")
 
     if idx_num:
-        v_idx = upstash_get(f"fleet:wallets_vault:index_{idx_num}")
+        v_idx = turso_get(f"fleet:wallets_vault:index_{idx_num}")
         if v_idx and isinstance(v_idx, dict) and v_idx.get("wallets"):
             w_suite = v_idx["wallets"]
             return idx_num, w_suite, v_idx.get("name"), v_idx.get("email")
 
-    # D. Check accounts in Redis fleet:accounts
-    cloud_accs = upstash_get("fleet:accounts") or []
+    # D. Check accounts in Turso fleet:accounts
+    cloud_accs = turso_get("fleet:accounts") or []
     if isinstance(cloud_accs, list):
         for ca in cloud_accs:
             if not isinstance(ca, dict):
@@ -258,7 +258,7 @@ def ensure_account_complete(acc_entry: dict, all_accounts: list = None) -> dict:
     except Exception as se:
         logger.warning(f"save_and_archive_account_wallets note: {se}")
 
-    # 5. Save to Upstash Redis vault
+    # 5. Save to Turso LibSQL vault
     vault_payload = {
         "index": target_idx,
         "name": acc_name,
@@ -269,17 +269,17 @@ def ensure_account_complete(acc_entry: dict, all_accounts: list = None) -> dict:
         "wallets": wallets,
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
     }
-    upstash_set(f"fleet:wallets_vault:{uid_str}", vault_payload)
-    upstash_set(f"fleet:wallets_vault:index_{target_idx}", vault_payload)
-    upstash_set(f"account:{uid_str}", acc_entry)
+    turso_set(f"fleet:wallets_vault:{uid_str}", vault_payload)
+    turso_set(f"fleet:wallets_vault:index_{target_idx}", vault_payload)
+    turso_set(f"account:{uid_str}", acc_entry)
 
     # Auto-clear revocation flags if valid session exists
     if acc_entry.get("session_string") and not acc_entry.get("session_revoked"):
-        upstash_srem("fleet:revoked_sessions", str(target_idx))
-        upstash_srem("fleet:revoked_sessions", uid_str)
-        upstash_sadd("fleet:healthy_sessions", str(target_idx))
-        upstash_sadd("fleet:healthy_sessions", uid_str)
-        upstash_del(f"fleet:revocation_reason:{target_idx}")
+        turso_srem("fleet:revoked_sessions", str(target_idx))
+        turso_srem("fleet:revoked_sessions", uid_str)
+        turso_sadd("fleet:healthy_sessions", str(target_idx))
+        turso_sadd("fleet:healthy_sessions", uid_str)
+        turso_delete(f"fleet:revocation_reason:{target_idx}")
 
     return acc_entry
 
@@ -287,7 +287,7 @@ def ensure_account_complete(acc_entry: dict, all_accounts: list = None) -> dict:
 def reconcile_all_fleet_accounts() -> List[Dict[str, Any]]:
     """
     Master Reconciliation Engine:
-    Loads accounts from accounts.json, Upstash Redis (fleet:accounts, account:*),
+    Loads accounts from accounts.json, Turso LibSQL Primary SSOT (fleet:accounts, account:*),
     merges and deduplicates, runs ensure_account_complete() on all entries,
     and updates accounts.json, fleet:accounts, and fleet:live_state atomically.
     """
@@ -303,8 +303,8 @@ def reconcile_all_fleet_accounts() -> List[Dict[str, Any]]:
                 if uid:
                     accounts_by_uid[uid] = la
 
-    # 2. Load Upstash Redis fleet:accounts
-    cloud_accs = upstash_get("fleet:accounts") or []
+    # 2. Load Turso LibSQL fleet:accounts
+    cloud_accs = turso_get("fleet:accounts") or []
     if isinstance(cloud_accs, list):
         for ca in cloud_accs:
             if isinstance(ca, dict):
@@ -344,17 +344,15 @@ def reconcile_all_fleet_accounts() -> List[Dict[str, Any]]:
     save_json_file(ACCOUNTS_FILE, reconciled)
     logger.info(f"✅ Saved {len(reconciled)} reconciled accounts to {ACCOUNTS_FILE}")
 
-    # 5. Save to Upstash Redis fleet:accounts
-    upstash_set("fleet:accounts", reconciled)
+    # 5. Save to Turso LibSQL fleet:accounts
+    turso_set("fleet:accounts", reconciled)
 
-    # 6. Regenerate and update fleet:live_state in Redis
-    revoked_raw = upstash_smembers("fleet:revoked_sessions")
+    # 6. Regenerate and update fleet:live_state in Turso LibSQL
+    revoked_raw = turso_smembers("fleet:revoked_sessions")
     revoked_set = set(str(x) for x in revoked_raw) if isinstance(revoked_raw, list) else set()
 
     state_accounts = []
-    tokens_map = upstash_get("miniapp_tokens") or {}
-    if not isinstance(tokens_map, dict):
-        tokens_map = {}
+    tokens_map = turso_get("miniapp_tokens") or {}
     if not isinstance(tokens_map, dict):
         tokens_map = {}
 
@@ -384,8 +382,8 @@ def reconcile_all_fleet_accounts() -> List[Dict[str, Any]]:
         "timestamp": time.time(),
         "updated_by": "auto_wallet_manager"
     }
-    upstash_set("fleet:live_state", live_state)
-    logger.info(f"🎉 Updated fleet:live_state with all {len(state_accounts)} accounts across Redis & Edge mesh!")
+    turso_set("fleet:live_state", live_state)
+    logger.info(f"🎉 Updated fleet:live_state with all {len(state_accounts)} accounts across Turso SSOT & Edge mesh!")
 
     return reconciled
 
@@ -441,7 +439,7 @@ async def connect_and_start_bot_wallets(acc_entry: dict, tokens: dict = None, se
     mnemonic = ton_wallet.get("mnemonic") or ton_wallet.get("mnemonic_words")
 
     if not tokens:
-        raw_tm = upstash_get("miniapp_tokens")
+        raw_tm = turso_get("miniapp_tokens")
         while isinstance(raw_tm, str):
             try:
                 raw_tm = json.loads(raw_tm)
@@ -450,7 +448,7 @@ async def connect_and_start_bot_wallets(acc_entry: dict, tokens: dict = None, se
         tokens_map = raw_tm if isinstance(raw_tm, dict) else {}
         tokens = tokens_map.get(uid) or {}
         if not tokens:
-            raw_t = upstash_get(f"fleet:tokens:{uid}")
+            raw_t = turso_get(f"fleet:tokens:{uid}")
             while isinstance(raw_t, str):
                 try:
                     raw_t = json.loads(raw_t)
@@ -694,7 +692,7 @@ async def run_wallet_and_mining_sweep():
     """Sweeps across all 23 accounts, connects wallets, and activates mining."""
     accounts = await asyncio.to_thread(reconcile_all_fleet_accounts)
     logger.info(f"🚀 Launching autonomous wallet connection & mining sweep across {len(accounts)} accounts...")
-    raw_tm = await asyncio.to_thread(upstash_get, "miniapp_tokens")
+    raw_tm = await asyncio.to_thread(turso_get, "miniapp_tokens")
     while isinstance(raw_tm, str):
         try:
             raw_tm = json.loads(raw_tm)
