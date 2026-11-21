@@ -42,8 +42,12 @@ API_BASE = "https://huntrs.up.railway.app"
 CF_SECRET_KEY = os.getenv("CF_SECRET_KEY") or os.getenv("SECRET_KEY", "agy_cf_secret_7d36994e_2026")
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
-UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL", "")
-UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+
+try:
+    from turso_mesh import turso_get, turso_set
+except ImportError:
+    turso_get = None
+    turso_set = None
 
 CF_PROXY_NODES = [
     "https://restore-agy.agorameet.workers.dev/api/hunter-proxy",
@@ -83,22 +87,17 @@ def load_fleet_data() -> Tuple[Dict, List]:
         except Exception:
             pass
 
-    # Cloud Fallback from Upstash Redis (for headless cloud runners)
-    if (not accounts or not tokens) and UPSTASH_URL and UPSTASH_TOKEN:
+    # Cloud Primary Fallback from Turso LibSQL kv_mesh (for headless cloud runners)
+    if (not accounts or not tokens) and turso_get:
         try:
-            headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
             if not accounts:
-                req_a = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:accounts", headers=headers)
-                with urllib.request.urlopen(req_a, timeout=5) as r:
-                    res_a = json.loads(r.read().decode()).get("result")
-                    if res_a:
-                        accounts = robust_json_loads(res_a)
+                res_a = turso_get("fleet:accounts")
+                if res_a:
+                    accounts = robust_json_loads(res_a)
             if not tokens:
-                req_t = urllib.request.Request(f"{UPSTASH_URL}/get/miniapp_tokens", headers=headers)
-                with urllib.request.urlopen(req_t, timeout=5) as r:
-                    res_t = json.loads(r.read().decode()).get("result")
-                    if res_t:
-                        tokens = robust_json_loads(res_t)
+                res_t = turso_get("miniapp_tokens")
+                if res_t:
+                    tokens = robust_json_loads(res_t)
         except Exception:
             pass
 
@@ -224,20 +223,15 @@ class HunterClient:
             if self.user_data:
                 return True
 
-        # Check Upstash Redis for cached 7-day hunter_jwt
-        if not self.token and UPSTASH_URL and UPSTASH_TOKEN:
+        # Check Turso LibSQL kv_mesh for cached 7-day hunter_jwt
+        if not self.token and turso_get:
             try:
-                req_t = urllib.request.Request(
-                    f"{UPSTASH_URL}/get/fleet:tokens:{self.uid}:hunter_jwt",
-                    headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-                )
-                with urllib.request.urlopen(req_t, timeout=4) as rt:
-                    cached_jwt = json.loads(rt.read().decode()).get("result")
-                    if cached_jwt and isinstance(cached_jwt, str) and len(cached_jwt) > 20:
-                        self.token = cached_jwt
-                        self.refresh_user()
-                        if self.user_data:
-                            return True
+                cached_jwt = turso_get(f"fleet:tokens:{self.uid}:hunter_jwt")
+                if cached_jwt and isinstance(cached_jwt, str) and len(cached_jwt) > 20:
+                    self.token = cached_jwt
+                    self.refresh_user()
+                    if self.user_data:
+                        return True
             except Exception:
                 pass
 
@@ -276,8 +270,8 @@ class HunterClient:
         if res.get("token"):
             self.token = res["token"]
             self._update_state(res.get("user", {}), res.get("completedTasks"))
-            # Persist 7-day JWT to Upstash Redis
-            self._save_jwt_to_redis(res["token"])
+            # Persist 7-day JWT to Turso LibSQL kv_mesh
+            self._save_jwt_to_turso(res["token"])
             return True
         return False
 
@@ -305,19 +299,15 @@ class HunterClient:
             "time_remaining": max(0, int((mining_end - now_ms) / 1000)) if is_active_now else 0
         }
 
-    def _save_jwt_to_redis(self, jwt_tok: str):
-        if not UPSTASH_URL or not UPSTASH_TOKEN or not jwt_tok:
+    def _save_jwt_to_turso(self, jwt_tok: str):
+        if not turso_set or not jwt_tok:
             return
         try:
-            req_s = urllib.request.Request(
-                f"{UPSTASH_URL}/set/fleet:tokens:{self.uid}:hunter_jwt",
-                data=jwt_tok.encode("utf-8"),
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-            )
-            with urllib.request.urlopen(req_s, timeout=4):
-                pass
+            turso_set(f"fleet:tokens:{self.uid}:hunter_jwt", jwt_tok)
         except Exception:
             pass
+
+    _save_jwt_to_redis = _save_jwt_to_turso
 
     def refresh_user(self) -> dict:
         res = self._call_api("/api/get-user", {})
