@@ -1700,6 +1700,89 @@ async def start_heartbeat_loop(max_runtime: float = 0.0):
             logger.warning(f"[Sniper Heartbeat Note]: {e}")
 
 # =====================================================================
+# MINIEMPIRE ZERO-IDLE PRODUCTION KEEPER (PepeGram & Lifetime Energy)
+# =====================================================================
+async def start_miniempire_production_keeper():
+    """
+    Continuous 24/7 Zero-Idle Production Keeper for MiniEmpire Bots:
+    1. PepeGram (@Pepe_gram_bot, tid=1449) — 6-hour cycles
+    2. Lifetime Energy (@lifetime_energy_bot, tid=5) — 4-hour cycles
+
+    Checks all fleet accounts every 3 minutes.
+    If current_time >= cached ends_at (or on startup), issues POST /start-production
+    to ensure 100% active mining uptime with ZERO idle button state.
+    """
+    logger.info("[MiniEmpire Keeper] Initializing 24/7 zero-idle production keeper loop...")
+    pepe_ends = {} # uid -> unix_timestamp
+    le_ends = {}   # uid -> unix_timestamp
+
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": "https://app.miniempire.app",
+        "Referer": "https://app.miniempire.app/miniapp/",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36"
+    }
+
+    # Initial delay to let startup burst finish cleanly
+    await asyncio.sleep(15)
+
+    while True:
+        try:
+            now = time.time()
+            fleet = CACHED_FLEET_TOKENS or load_fleet_tokens(force_refresh=False)
+
+            async with aiohttp.ClientSession(headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as session:
+                for uid, tdata in list(fleet.items()):
+                    # 1. PepeGram (tid=1449)
+                    p_init = tdata.get("pepegram_init_data") or tdata.get("pepe_init_data")
+                    if p_init and (uid not in pepe_ends or now >= pepe_ends[uid] - 60):
+                        try:
+                            async with session.post(
+                                "https://app.miniempire.app/miniapp/start-production?tid=1449",
+                                json={"initData": p_init, "tid": 1449}
+                            ) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    new_ends = data.get("ends_at")
+                                    if new_ends:
+                                        pepe_ends[uid] = float(new_ends)
+                                        msg = data.get("message", "ok")
+                                        if msg != "session already active":
+                                            logger.info(f"[MiniEmpire Keeper] PepeGram production restarted for {uid}! Ends at {new_ends}")
+                        except Exception as e_p:
+                            logger.debug(f"[MiniEmpire Keeper] PepeGram {uid} note: {e_p}")
+
+                    # 2. Lifetime Energy (tid=5)
+                    le_init = tdata.get("lifetime_energy_init_data") or tdata.get("lifetime_init_data")
+                    if le_init and (uid not in le_ends or now >= le_ends[uid] - 60):
+                        try:
+                            async with session.post(
+                                "https://app.miniempire.app/miniapp/start-production?tid=5",
+                                json={"initData": le_init, "tid": 5}
+                            ) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    new_ends = data.get("ends_at")
+                                    if new_ends:
+                                        le_ends[uid] = float(new_ends)
+                                        msg = data.get("message", "ok")
+                                        if msg != "session already active":
+                                            logger.info(f"[MiniEmpire Keeper] Lifetime Energy production restarted for {uid}! Ends at {new_ends}")
+                        except Exception as e_le:
+                            logger.debug(f"[MiniEmpire Keeper] Lifetime {uid} note: {e_le}")
+
+                    await asyncio.sleep(0.3)
+
+            # Sleep 180 seconds before next check
+            await asyncio.sleep(180)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"[MiniEmpire Keeper Error]: {e}")
+            await asyncio.sleep(60)
+
+# =====================================================================
 # UNIFIED DAEMON LAUNCHER
 # =====================================================================
 async def run_unified_sniper_daemon(poll_interval: float = 3.0, max_runtime: float = 0.0):
@@ -1775,6 +1858,7 @@ async def run_unified_sniper_daemon(poll_interval: float = 3.0, max_runtime: flo
         start_mtproto_listener(),
         start_http_poller(poll_interval=poll_interval),
         start_heartbeat_loop(max_runtime=max_runtime),
+        start_miniempire_production_keeper(),
         return_exceptions=True
     )
 
