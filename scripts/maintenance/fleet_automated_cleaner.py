@@ -21,7 +21,7 @@ and leftover third-party sponsor channels across all fleet accounts:
    - Purges orphaned lock keys (lock:* or fleet:lock:*)
 
 3. Telegram Ephemeral Dialog & Sponsor Purger (Rule 8 & 11):
-   - Strict whitelisting: NEVER deletes official fleet/admin channels or active 13 bots
+   - Strict whitelisting: NEVER deletes official fleet/admin channels or active 12 bots
    - Detects and leaves all non-whitelisted sponsor channels joined during tasks
    - Revokes and purges dialogs for defunct/promo bots (e.g. Gram Master, Grouche, etc.)
    - Keeps the user's Telegram chat list 100% clean and pristine
@@ -46,14 +46,16 @@ import urllib.request
 from typing import Dict, List, Any, Set, Tuple
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"))
 except ImportError:
     pass
 
-UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("UPSTASH_URL", "")
-UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_TOKEN", "")
+TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_URL", "")
+TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_TOKEN", "")
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_NOTIFICATION_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
 
@@ -96,10 +98,10 @@ OFFICIAL_USERNAMES: Set[str] = {
     # System & Admin Bots
     "myagyai", "my_router_ai_bot", "aaapremiumappsbot", "aaagmailbot", "aaa_instant_mail_bot",
     "botfather", "spambot", "stickers", "telegram",
-    # Active 13 Legitimate Mining Bots & Official Channels
+    # Active 12 Legitimate Mining Bots & Official Channels
     "atfminers_bot", "atf_airdrop_bot", "kynex_miningbot", "pepe_gram_bot",
     "adxearnaibot", "adxearnai", "chickenlandbot", "earnvaultapp_bot", "earnvaulte", "mexoearni_bot",
-    "myageapp", "appmyage", "lifetime_energy_bot", "cherryplaybot",
+    "myageapp", "appmyage", "lifetime_energy_bot",
     "victors_company_bot", "web3primeteam", "solanamemes001",
     "dillo_miner_bot", "dillotonlive",
     "gramhtrsbot", "gramhtrs", "rootofhunter",
@@ -231,75 +233,67 @@ def clean_filesystem(dry_run: bool = False) -> Dict[str, Any]:
 
 
 # =============================================================================
-# 2. UPSTASH REDIS CLOUD DATABASE CLEANER
+# 2. TURSO LIBSQL EDGE MESH CLOUD DATABASE CLEANER
 # =============================================================================
 
-def clean_redis(dry_run: bool = False) -> Dict[str, Any]:
-    """Purges obsolete test keys, legacy token subkeys, and caps Redis histories."""
-    print("\n🧹 [2/3] Auditing and pruning Upstash Redis keys...")
+def clean_turso_mesh(dry_run: bool = False) -> Dict[str, Any]:
+    """Purges obsolete test keys, legacy token subkeys, and defunct bot keys from Turso LibSQL kv_mesh."""
+    print("\n🧹 [2/3] Auditing and pruning Turso LibSQL kv_mesh keys...")
     report = {
         "test_keys_deleted": 0,
+        "defunct_bot_keys_deleted": 0,
         "legacy_token_subkeys_deleted": 0,
-        "payout_history_trimmed": False
     }
 
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        print("  ⚠️ Upstash credentials missing, skipping Redis cleanup.")
-        return report
-
-    def redis_req(method: str, endpoint: str, data: Any = None) -> Any:
-        url = f"{UPSTASH_URL}/{endpoint}"
-        h = {"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"}
-        try:
-            req = urllib.request.Request(url, data=json.dumps(data).encode() if data else None, headers=h, method=method)
-            with urllib.request.urlopen(req, timeout=10) as r:
-                return json.loads(r.read().decode())
-        except Exception as e:
-            return {"error": str(e), "result": []}
-
     try:
-        # 1. Delete standalone leftover test keys
+        from turso_mesh import turso_execute
+        # 1. Purge standalone leftover test keys
         test_keys = ["test_key", "test_key_1", "test_key_2"]
         for tk in test_keys:
             if not dry_run:
                 try:
-                    redis_req("GET", f"del/{tk}")
+                    turso_execute("DELETE FROM kv_mesh WHERE key = ?;", [tk])
                     report["test_keys_deleted"] += 1
                 except Exception:
                     pass
             else:
                 report["test_keys_deleted"] += 1
 
-        # 2. Delete legacy subkeys (fleet:tokens:*:chickenland_init_data, etc.)
-        res = redis_req("GET", "keys/fleet:tokens:*:*")
-        subkeys = res.get("result", [])
-        for sk in subkeys:
+        # 2. Purge defunct bot keys (Strict 12-Bot Integrity)
+        defunct_bots = [
+            "mrg", "vyro", "diggo", "cherry", "cherryplay", "azm", "azmir",
+            "tavora", "tvr", "jvault", "jvt", "lum", "lumeon", "cryptofarm", "crypto_farm",
+            "grouche", "grouchemine", "leafearn", "leaf", "pumpkin", "stones", "ailab",
+            "ultrawallet", "finvora", "ainovum", "tensor", "tontrader", "tac", "usdtquad",
+            "apex", "apx", "art", "trxpower", "turbogram", "mininggram", "grc", "paidz"
+        ]
+        chunk_size = 8
+        for i in range(0, len(defunct_bots), chunk_size):
+            chunk = defunct_bots[i:i+chunk_size]
+            where_clauses = []
+            for b in chunk:
+                where_clauses.append(f"key LIKE 'fleet:last_farm:{b}:%'")
+                where_clauses.append(f"key LIKE 'fleet:farm_error:{b}:%'")
+                where_clauses.append(f"key LIKE 'fleet:{b}:%'")
+                where_clauses.append(f"key LIKE 'fleet:tokens:%:{b}%'")
+            sql = f"DELETE FROM kv_mesh WHERE {' OR '.join(where_clauses)};"
             if not dry_run:
                 try:
-                    redis_req("GET", f"del/{sk}")
-                    report["legacy_token_subkeys_deleted"] += 1
+                    turso_execute(sql)
+                    report["defunct_bot_keys_deleted"] += len(chunk)
                 except Exception:
                     pass
             else:
-                report["legacy_token_subkeys_deleted"] += 1
-
-        # 3. Cap payout history to 100 entries (LTRIM fleet:payouts:history 0 99)
-        if not dry_run:
-            try:
-                redis_req("GET", "ltrim/fleet:payouts:history/0/99")
-                report["payout_history_trimmed"] = True
-            except Exception:
-                pass
-        else:
-            report["payout_history_trimmed"] = True
+                report["defunct_bot_keys_deleted"] += len(chunk)
 
     except Exception as e:
-        print(f"  ❌ Redis cleaner error: {e}")
+        print(f"  ❌ Turso cleaner error: {e}")
 
     print(f"  ✅ Test keys deleted: {report['test_keys_deleted']}")
-    print(f"  ✅ Legacy individual token subkeys deleted: {report['legacy_token_subkeys_deleted']}")
-    print(f"  ✅ Payout history trimmed to 100 items: {report['payout_history_trimmed']}")
+    print(f"  ✅ Defunct bot key categories purged: {report['defunct_bot_keys_deleted']}")
     return report
+
+clean_redis = clean_turso_mesh  # Backward-compatibility alias
 
 
 # =============================================================================
@@ -444,7 +438,7 @@ async def main_async(dry_run: bool = False, clean_dialogs: bool = True):
     print("=" * 75)
 
     fs_rep = clean_filesystem(dry_run=dry_run)
-    rd_rep = clean_redis(dry_run=dry_run)
+    turso_rep = clean_turso_mesh(dry_run=dry_run)
     tg_rep = {"total_channels_left": 0, "total_bots_purged": 0}
     if clean_dialogs:
         tg_rep = await clean_all_telegram_dialogs(dry_run=dry_run, master_only=True)
@@ -452,19 +446,19 @@ async def main_async(dry_run: bool = False, clean_dialogs: bool = True):
     print("\n" + "=" * 75)
     print("🎉 AUTOMATED FLEET CLEANER COMPLETE!")
     print(f"• Filesystem: {fs_rep['pycache_removed']} caches + {fs_rep['pyc_files_removed']} pyc files removed")
-    print(f"• Redis Cloud: {rd_rep['test_keys_deleted']} test keys + {rd_rep['legacy_token_subkeys_deleted']} legacy keys purged")
+    print(f"• Turso LibSQL Mesh: {turso_rep['test_keys_deleted']} test keys + {turso_rep['defunct_bot_keys_deleted']} defunct bot key categories purged")
     print(f"• Telegram Dialogs: {tg_rep['total_channels_left']} sponsor channels left, {tg_rep['total_bots_purged']} bots purged")
     print("=" * 75)
 
     # Dispatch short concise alert card if anything was cleaned and not dry-run
     if not dry_run and REPORT_BOT_TOKEN and ADMIN_NOTIFICATION_CHANNEL_ID:
-        total_actions = fs_rep['pycache_removed'] + rd_rep['test_keys_deleted'] + rd_rep['legacy_token_subkeys_deleted'] + tg_rep['total_channels_left'] + tg_rep['total_bots_purged']
+        total_actions = fs_rep['pycache_removed'] + turso_rep['test_keys_deleted'] + turso_rep['defunct_bot_keys_deleted'] + tg_rep['total_channels_left'] + tg_rep['total_bots_purged']
         if total_actions > 0:
             text = (
                 f"🧹 <b>Automated Fleet Hygiene & Cleaner Report</b>\n"
                 f"• <b>Status:</b> 🟢 <code>CLEANUP COMPLETE</code>\n"
                 f"• <b>Filesystem:</b> <code>{fs_rep['pycache_removed']} caches, {fs_rep['pyc_files_removed']} pyc pruned</code>\n"
-                f"• <b>Redis Database:</b> <code>{rd_rep['test_keys_deleted']} test keys, {rd_rep['legacy_token_subkeys_deleted']} legacy keys pruned</code>\n"
+                f"• <b>Turso LibSQL Mesh:</b> <code>{turso_rep['test_keys_deleted']} test keys, {turso_rep['defunct_bot_keys_deleted']} defunct bot categories pruned</code>\n"
                 f"• <b>Telegram Dialogs:</b> <code>{tg_rep['total_channels_left']} channels left, {tg_rep['total_bots_purged']} bots purged</code>\n"
                 f"• <b>Policy:</b> 100% Whitelist Intact (Rule 8 & 11 Compliant)"
             )

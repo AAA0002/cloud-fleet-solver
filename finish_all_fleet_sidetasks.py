@@ -542,11 +542,18 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
 
 
 async def sync_token_to_cf(session: aiohttp.ClientSession, uid: str, token_dict: dict):
-    """Syncs merged tokens to Cloudflare Worker edge nodes."""
+    """Syncs merged tokens to Turso LibSQL kv_mesh Primary SSOT and Cloudflare Worker edge nodes."""
     payload = {
         "account_id": str(uid),
         **token_dict
     }
+    # 1. Sync to Turso LibSQL Primary SSOT
+    try:
+        turso_set(f"fleet:tokens:{uid}", payload)
+    except Exception:
+        pass
+
+    # 2. Sync to Cloudflare Worker edge nodes
     for cf_url in ["https://restore-agy.agorameet.workers.dev"] + [u for u in CF_WORKERS if "agorameet" not in u]:
         try:
             async with session.post(
@@ -2026,8 +2033,10 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
         res["notes"].append("missing_init_data")
         return res
 
-    # 1. Retrieve humanPass from acc dict, Turso LibSQL SSOT, or Upstash
+    # 1. Retrieve humanPass from acc dict, Turso LibSQL SSOT
     hp = acc.get("victors_pass") or acc.get("victors_human_pass")
+    if hp and isinstance(hp, str) and "." in hp and hp.split(".")[0] != str(uid):
+        hp = None  # Force re-fetch if cached pass belongs to another account
     if not hp and TURSO_URL and TURSO_TOKEN:
         try:
             t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"

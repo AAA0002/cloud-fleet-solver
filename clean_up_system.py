@@ -46,18 +46,20 @@ if os.path.exists(ENV_FILE):
                 k, v = line.split("=", 1)
                 env_config[k.strip()] = v.strip().strip('"').strip("'")
 
-UPSTASH_URL = (
-    env_config.get("UPSTASH_REDIS_REST_URL")
-    or env_config.get("UPSTASH_URL")
-    or os.environ.get("UPSTASH_REDIS_REST_URL")
-    or os.environ.get("UPSTASH_URL")
-    or "https://relaxing-starfish-285827.upstash.io"
+# Turso LibSQL Primary Authoritative Mesh
+TURSO_URL = (
+    env_config.get("TURSO_DB_URL")
+    or env_config.get("TURSO_URL")
+    or os.environ.get("TURSO_DB_URL")
+    or os.environ.get("TURSO_URL")
+    or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
 )
-UPSTASH_TOKEN = (
-    env_config.get("UPSTASH_REDIS_REST_TOKEN")
-    or env_config.get("UPSTASH_TOKEN")
-    or os.environ.get("UPSTASH_REDIS_REST_TOKEN")
-    or os.environ.get("UPSTASH_TOKEN")
+TURSO_TOKEN = (
+    env_config.get("TURSO_DB_TOKEN")
+    or env_config.get("TURSO_TOKEN")
+    or os.environ.get("TURSO_DB_TOKEN")
+    or os.environ.get("TURSO_TOKEN")
+    or ""
 )
 def _resolve_gh_pat() -> str:
     cred_path = os.path.expanduser("~/.git-credentials")
@@ -218,116 +220,57 @@ def sanitize_local_processes(dry_run: bool = False) -> int:
 
 
 # -----------------------------------------------------------------------------
-# 3. Upstash Redis Serverless Storage & Command Sanitation
+# 3. Turso LibSQL Edge Mesh Sanitation (Strict 12-Bot Integrity)
 # -----------------------------------------------------------------------------
-def sanitize_upstash_redis(dry_run: bool = False) -> dict:
-    """Caps oversized lists, removes expired passes, and enforces TTL hygiene."""
-    logger.info("⚡ [Tier 3] Performing Upstash Redis Quota & Storage Hygiene...")
-    stats = {"lists_trimmed": 0, "keys_examined": 0, "stale_passes_purged": 0}
+def sanitize_turso_libsql(dry_run: bool = False) -> int:
+    """Purges defunct bot keys from Turso LibSQL kv_mesh (Strict 12-Bot Integrity)."""
+    logger.info("🛡️ [Tier 3] Auditing Turso LibSQL kv_mesh for defunct bot keys...")
+    if not (TURSO_URL and TURSO_TOKEN):
+        logger.warning("Turso credentials not configured. Skipping Turso cleanup.")
+        return 0
 
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        logger.warning("Upstash credentials not present. Skipping Upstash sanitation.")
-        return stats
-
-    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"}
-
-    # 3.1 Trim fleet:payouts list to 100 entries max (prevents unbounded memory growth)
-    try:
-        req = urllib.request.Request(
-            f"{UPSTASH_URL}/ltrim/fleet:payouts/0/99",
-            headers=headers
-        )
-        if not dry_run:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status == 200:
-                    stats["lists_trimmed"] += 1
-                    logger.info("  ✂️ Trimmed list 'fleet:payouts' to 100 most recent records.")
-        else:
-            stats["lists_trimmed"] += 1
-    except Exception as e:
-        logger.debug(f"Upstash ltrim note: {e}")
-
-    # 3.2 Audit Turnstile security pass keys (*:pass:*); remove passes older than 48 hours
-    try:
-        req_keys = urllib.request.Request(f"{UPSTASH_URL}/keys/*:pass:*", headers=headers)
-        with urllib.request.urlopen(req_keys, timeout=6) as rk:
-            if rk.status == 200:
-                k_data = json.loads(rk.read().decode())
-                pass_keys = k_data.get("result", [])
-                stats["keys_examined"] = len(pass_keys)
-
-                if pass_keys:
-                    pipe_payload = [["get", k] for k in pass_keys]
-                    req_pipe = urllib.request.Request(
-                        f"{UPSTASH_URL}/pipeline",
-                        data=json.dumps(pipe_payload).encode(),
-                        headers=headers
-                    )
-                    with urllib.request.urlopen(req_pipe, timeout=8) as rp:
-                        if rp.status == 200:
-                            p_results = json.loads(rp.read().decode())
-                            now = time.time()
-                            del_payload = []
-                            for idx, item in enumerate(p_results):
-                                val_str = item.get("result")
-                                if val_str:
-                                    try:
-                                        obj = json.loads(val_str) if isinstance(val_str, str) else val_str
-                                        ts = obj.get("timestamp") or obj.get("updated_at", 0)
-                                        # Stale if older than 48 hours (172800s)
-                                        if ts and (now - ts) > 172800:
-                                            del_payload.append(["del", pass_keys[idx]])
-                                    except Exception:
-                                        pass
-                            if del_payload and not dry_run:
-                                req_del = urllib.request.Request(
-                                    f"{UPSTASH_URL}/pipeline",
-                                    data=json.dumps(del_payload).encode(),
-                                    headers=headers
-                                )
-                                with urllib.request.urlopen(req_del, timeout=8) as rd:
-                                    if rd.status == 200:
-                                        stats["stale_passes_purged"] = len(del_payload)
-                                        logger.info(f"  🧹 Purged {len(del_payload)} expired Turnstile security passes (>48h old).")
-                            elif del_payload:
-                                stats["stale_passes_purged"] = len(del_payload)
-    except Exception as ue:
-        logger.debug(f"Upstash pass audit note: {ue}")
-
-    # 3.3 Purge legacy defunct bot keys from Upstash Redis (Strict 14-Bot Integrity)
-    dead_patterns = [
-        "fleet:mrg:*", "fleet:last_farm:mrg:*", "fleet:farm_error:mrg:*",
-        "fleet:astra:*", "fleet:last_farm:astra:*", "fleet:farm_error:astra:*",
-        "fleet:leafearn:*", "fleet:last_farm:leafearn:*", "fleet:farm_error:leafearn:*",
-        "fleet:pumpkin:*", "fleet:last_farm:pumpkin:*", "fleet:farm_error:pumpkin:*",
-        "fleet:stones:*", "fleet:last_farm:stones:*", "fleet:farm_error:stones:*",
-        "fleet:vyro:*", "fleet:last_farm:vyro:*", "fleet:farm_error:vyro:*",
-        "fleet:diggo:*", "fleet:last_farm:diggo:*", "fleet:farm_error:diggo:*",
-        "fleet:ailab:*", "fleet:finvora:*", "fleet:ultrawallet:*", "fleet:grouche:*"
+    defunct_bots = [
+        "mrg", "vyro", "diggo", "cherry", "cherryplay", "azm", "azmir",
+        "tavora", "tvr", "jvault", "jvt", "lum", "lumeon", "cryptofarm", "crypto_farm",
+        "grouche", "grouchemine", "leafearn", "leaf", "pumpkin", "stones", "ailab",
+        "ultrawallet", "finvora", "ainovum", "tensor", "tontrader", "tac", "usdtquad",
+        "apex", "apx", "art", "trxpower", "turbogram", "mininggram", "grc", "paidz"
     ]
-    for dp in dead_patterns:
-        try:
-            req_d = urllib.request.Request(f"{UPSTASH_URL}/keys/{dp}", headers=headers)
-            with urllib.request.urlopen(req_d, timeout=6) as rd:
-                if rd.status == 200:
-                    d_keys = json.loads(rd.read().decode()).get("result", [])
-                    if d_keys:
-                        pipe_del = [["del", k] for k in d_keys]
-                        if not dry_run:
-                            req_pdel = urllib.request.Request(
-                                f"{UPSTASH_URL}/pipeline",
-                                data=json.dumps(pipe_del).encode(),
-                                headers=headers
-                            )
-                            with urllib.request.urlopen(req_pdel, timeout=8) as rpd:
-                                pass
-                        stats["stale_passes_purged"] += len(d_keys)
-                        logger.info(f"  🧹 Purged {len(d_keys)} legacy dead bot keys ({dp}).")
-        except Exception as dpe:
-            logger.debug(f"Dead key sweep error for {dp}: {dpe}")
+    endpoint = TURSO_URL.rstrip("/").replace("libsql://", "https://") + "/v2/pipeline"
+    chunk_size = 8
+    total_purged = 0
 
-    logger.info(f"✅ Upstash Hygiene Complete: {stats['lists_trimmed']} lists capped, {stats['stale_passes_purged']} expired keys purged.")
-    return stats
+    for i in range(0, len(defunct_bots), chunk_size):
+        chunk = defunct_bots[i:i+chunk_size]
+        where_clauses = []
+        for b in chunk:
+            where_clauses.append(f"key LIKE 'fleet:last_farm:{b}:%'")
+            where_clauses.append(f"key LIKE 'fleet:farm_error:{b}:%'")
+            where_clauses.append(f"key LIKE 'fleet:{b}:%'")
+            where_clauses.append(f"key LIKE 'fleet:tokens:%:{b}%'")
+        sql = f"DELETE FROM kv_mesh WHERE {' OR '.join(where_clauses)};"
+        if not dry_run:
+            try:
+                body = json.dumps({"requests": [{"type": "execute", "stmt": {"sql": sql}}, {"type": "close"}]}).encode()
+                req = urllib.request.Request(endpoint, data=body, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    data = json.loads(resp.read().decode())
+                    if data.get("results"):
+                        affected = data["results"][0].get("response", {}).get("result", {}).get("affected_row_count", 0)
+                        total_purged += affected
+                        if affected > 0:
+                            logger.info(f"  🧹 Turso: Deleted {affected} dead keys for {chunk}")
+            except Exception as e:
+                logger.debug(f"Turso cleanup note for {chunk}: {e}")
+
+    logger.info(f"✅ Turso LibSQL Hygiene Complete: {total_purged} defunct bot keys purged.")
+    return total_purged
+
+
+def sanitize_upstash_redis(dry_run: bool = False) -> dict:
+    """Backward-compatibility stub: Upstash Redis is permanently decommissioned in favor of Turso LibSQL kv_mesh."""
+    purged = sanitize_turso_libsql(dry_run=dry_run)
+    return {"purged": purged, "lists_trimmed": 0, "stale_passes_purged": 0}
 
 
 # -----------------------------------------------------------------------------
@@ -405,7 +348,7 @@ def run_all_sanitation(dry_run: bool = False):
 
     disk_stats = clean_local_disk(dry_run=dry_run)
     procs_killed = sanitize_local_processes(dry_run=dry_run)
-    upstash_stats = sanitize_upstash_redis(dry_run=dry_run)
+    turso_purged = sanitize_turso_libsql(dry_run=dry_run)
     runs_deleted = clean_github_actions_history(max_age_days=7, dry_run=dry_run)
 
     duration = time.time() - start_time
@@ -416,7 +359,7 @@ def run_all_sanitation(dry_run: bool = False):
     print(f"  • Stale Backups Pruned: {disk_stats['backup_zips_pruned']} archives")
     print(f"  • Oversized Logs:       {disk_stats['logs_rotated']} rotated")
     print(f"  • Local Rogue Procs:    {procs_killed} terminated (0 phone load)")
-    print(f"  • Upstash Redis Capped: {upstash_stats['lists_trimmed']} lists, {upstash_stats['stale_passes_purged']} stale passes")
+    print(f"  • Turso SSOT Purged:    {turso_purged} defunct keys deleted")
     print(f"  • Stale CI/CD Runs:     {runs_deleted} runs purged")
     print("=" * 65)
 
@@ -425,14 +368,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Autonomous Sanitation & Maintenance Engine for AAA AUTO")
     parser.add_argument("--dry-run", action="store_true", help="Preview cleanup actions without modifying files or keys")
     parser.add_argument("--disk-only", action="store_true", help="Run only local disk & cache cleanup")
-    parser.add_argument("--cloud-only", action="store_true", help="Run only Upstash & GitHub Actions cleanup")
+    parser.add_argument("--cloud-only", action="store_true", help="Run only Turso SSOT & GitHub Actions cleanup")
     parser.add_argument("--proc-only", action="store_true", help="Run only process sanitation check")
     args = parser.parse_args()
 
     if args.disk_only:
         clean_local_disk(dry_run=args.dry_run)
     elif args.cloud_only:
-        sanitize_upstash_redis(dry_run=args.dry_run)
+        sanitize_turso_libsql(dry_run=args.dry_run)
         clean_github_actions_history(dry_run=args.dry_run)
     elif args.proc_only:
         sanitize_local_processes(dry_run=args.dry_run)

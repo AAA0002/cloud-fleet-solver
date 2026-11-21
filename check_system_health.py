@@ -36,8 +36,6 @@ if os.path.exists(env_file):
                 if k not in env or not env[k]:
                     env[k] = v
 
-UPSTASH_URL = os.environ.get("UPSTASH_URL") or os.environ.get("UPSTASH_REDIS_REST_URL") or env.get("UPSTASH_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = os.environ.get("UPSTASH_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN") or env.get("UPSTASH_TOKEN") or ""
 TURSO_URL = os.environ.get("TURSO_URL") or os.environ.get("TURSO_DB_URL") or env.get("TURSO_URL") or env.get("TURSO_DB_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
 TURSO_TOKEN = os.environ.get("TURSO_TOKEN") or os.environ.get("TURSO_DB_TOKEN") or env.get("TURSO_TOKEN") or env.get("TURSO_DB_TOKEN") or ""
 ADMIN_BOT_TOKEN = os.environ.get("ADMIN_BOT_TOKEN") or os.environ.get("REPORT_BOT_TOKEN") or env.get("ADMIN_BOT_TOKEN") or env.get("REPORT_BOT_TOKEN") or ""
@@ -136,7 +134,7 @@ async def test_render_deployments():
                 print(f"  ⚠️ [{node_name}] Render check error: {e}")
 
 async def test_live_15_bots_probe():
-    print("\n--- 5. Probing Live 15-Bot API Connectivity & Tokens ---")
+    print("\n--- 5. Probing Live 12-Bot API Connectivity & Tokens ---")
     accs_file = os.path.join(BASE_DIR, "accounts.json")
     if not os.path.exists(accs_file):
         print("  ⚠️ accounts.json missing")
@@ -243,33 +241,50 @@ async def test_live_15_bots_probe():
         except Exception:
             pass
 
-    if UPSTASH_URL and UPSTASH_TOKEN:
+    # Check Turso LibSQL SSOT for cached Turnstile humanPass
+    if TURSO_URL and TURSO_TOKEN:
         try:
-            req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:tokens:6727787768", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-            with urllib.request.urlopen(req, timeout=4) as resp:
-                raw_d = json.loads(resp.read()).get("result")
-                if raw_d:
-                    u_toks = json.loads(raw_d) if isinstance(raw_d, str) else raw_d
-                    if isinstance(u_toks, dict):
-                        for k, v in u_toks.items():
-                            if v and (k not in live_tokens or extract_auth_date(v) > extract_auth_date(live_tokens.get(k))):
-                                live_tokens[k] = v
-                                token_uids[k] = str(extract_uid(v) or "6727787768")
-            # Also check for cached Turnstile humanPass
-            try:
-                req_vp = urllib.request.Request(f"{UPSTASH_URL}/get/victors:pass:6727787768", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-                with urllib.request.urlopen(req_vp, timeout=3) as vp_resp:
-                    vp_raw = json.loads(vp_resp.read()).get("result")
-                    if vp_raw:
-                        vp_d = json.loads(vp_raw) if isinstance(vp_raw, str) else vp_raw
-                        if isinstance(vp_d, dict) and vp_d.get("humanPass"):
-                            live_tokens["victors_human_pass"] = vp_d["humanPass"]
-                        elif isinstance(vp_d, str):
-                            live_tokens["victors_human_pass"] = vp_d
-            except Exception:
-                pass
+            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+            t_req = json.dumps({
+                "requests": [
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'victors:pass:6727787768' OR key LIKE 'victors:pass:%' LIMIT 1;", "args": []}},
+                    {"type": "close"}
+                ]
+            }).encode()
+            req_t = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req_t, timeout=4) as t_resp:
+                t_data = json.loads(t_resp.read().decode())
+                results = t_data.get("results", [])
+                if results:
+                    rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                    if rows:
+                        raw_vp = rows[0][0].get("value")
+                        if raw_vp:
+                            d_vp = json.loads(raw_vp) if isinstance(raw_vp, str) and raw_vp.startswith("{") else raw_vp
+                            if isinstance(d_vp, dict) and d_vp.get("humanPass"):
+                                live_tokens["victors_human_pass"] = d_vp["humanPass"]
+                            elif isinstance(d_vp, str):
+                                live_tokens["victors_human_pass"] = d_vp
         except Exception:
             pass
+
+    try:
+        from turso_mesh import turso_get
+        u_toks = turso_get("fleet:tokens:6727787768")
+        if u_toks and isinstance(u_toks, dict):
+            for k, v in u_toks.items():
+                if v and (k not in live_tokens or extract_auth_date(v) > extract_auth_date(live_tokens.get(k))):
+                    live_tokens[k] = v
+                    token_uids[k] = str(extract_uid(v) or "6727787768")
+        # Also check for cached Turnstile humanPass
+        vp_d = turso_get("victors:pass:6727787768")
+        if vp_d:
+            if isinstance(vp_d, dict) and vp_d.get("humanPass"):
+                live_tokens["victors_human_pass"] = vp_d["humanPass"]
+            elif isinstance(vp_d, str):
+                live_tokens["victors_human_pass"] = vp_d
+    except Exception:
+        pass
 
     bots_to_test = [
         ("1. ATF Miner", "https://atfminers.asloni.online/miner/index.php?action=login", "atf_init_data"),
@@ -413,31 +428,70 @@ async def test_live_15_bots_probe():
                     async with s.post(b_url, json={}, headers=h_age, timeout=aiohttp.ClientTimeout(total=6)) as r:
                         r_status = r.status
                 elif "victors" in tok_key:
-                    vic_uid = str(token_uids.get(tok_key, master_acc.get('user_id') or 6727787768))
+                    # In Victor's API, the user ID in x-human-pass MUST strictly match the user ID in initData
+                    vic_uid = str(token_uids.get(tok_key, "6727787768"))
+                    v_tok = tok
+                    v_pass = None
+
+                    # Query Turso LibSQL for available passes
+                    if TURSO_URL and TURSO_TOKEN:
+                        try:
+                            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+                            t_req = json.dumps({
+                                "requests": [
+                                    {"type": "execute", "stmt": {"sql": "SELECT key, val FROM kv_mesh WHERE key = ? LIMIT 1;", "args": [{"type": "text", "value": f"victors:pass:{vic_uid}"}]}},
+                                    {"type": "execute", "stmt": {"sql": "SELECT key, val FROM kv_mesh WHERE key = 'victors:pass:6727787768' LIMIT 1;", "args": []}},
+                                    {"type": "execute", "stmt": {"sql": "SELECT key, val FROM kv_mesh WHERE key LIKE 'victors:pass:%' LIMIT 10;", "args": []}},
+                                    {"type": "close"}
+                                ]
+                            }).encode()
+                            req_vp = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+                            with urllib.request.urlopen(req_vp, timeout=4) as vp_r:
+                                vp_d = json.loads(vp_r.read().decode())
+                                results = vp_d.get("results", [])
+                                for res in results:
+                                    if res.get("type") == "ok":
+                                        rows = res.get("response", {}).get("result", {}).get("rows", [])
+                                        for row in rows:
+                                            if len(row) >= 2 and row[1]:
+                                                raw_vp = row[1].get("value")
+                                                if raw_vp:
+                                                    d_vp = json.loads(raw_vp) if isinstance(raw_vp, str) and raw_vp.startswith("{") else raw_vp
+                                                    cand_pass = d_vp.get("humanPass") if isinstance(d_vp, dict) else d_vp
+                                                    if cand_pass:
+                                                        p_uid = str(cand_pass).split(".")[0]
+                                                        cand_tok = f_db.get(p_uid, {}).get("victors_init_data") if "f_db" in locals() else None
+                                                        if not cand_tok and p_uid == "6727787768":
+                                                            cand_tok = master_acc.get("victors_init_data")
+                                                        if cand_tok:
+                                                            v_pass = cand_pass
+                                                            v_tok = cand_tok
+                                                            vic_uid = p_uid
+                                                            break
+                                        if v_pass:
+                                            break
+                        except Exception:
+                            pass
+
+                    if not v_pass:
+                        # Fallback to local or Turso cached pass
+                        cand_pass = live_tokens.get("victors_human_pass") or live_tokens.get("victors_pass") or master_acc.get("victors_human_pass")
+                        if cand_pass:
+                            p_uid = str(cand_pass).split(".")[0]
+                            if p_uid.isdigit() and "f_db" in locals() and p_uid in f_db:
+                                cand_tok = f_db[p_uid].get("victors_init_data")
+                                if cand_tok:
+                                    v_pass = cand_pass
+                                    v_tok = cand_tok
+                                    vic_uid = p_uid
+
                     h_vic = {
                         "User-Agent": "Mozilla/5.0",
                         "Content-Type": "application/json",
-                        "Authorization": f"tma {tok}",
+                        "Authorization": f"tma {v_tok}",
                         "Origin": "https://app.victors.company",
                         "Referer": "https://app.victors.company/"
                     }
-                    v_pass = live_tokens.get("victors_human_pass") or master_acc.get("victors_human_pass")
-                    if not v_pass and UPSTASH_URL and UPSTASH_TOKEN:
-                        try:
-                            async with s.get(f"{UPSTASH_URL}/get/victors:pass:{vic_uid}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as r_up:
-                                if r_up.status == 200:
-                                    up_d = await r_up.json()
-                                    v_pass = up_d.get("result")
-                        except Exception:
-                            pass
-                    if not v_pass and UPSTASH_URL and UPSTASH_TOKEN and vic_uid != "6727787768":
-                        try:
-                            async with s.get(f"{UPSTASH_URL}/get/victors:pass:6727787768", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as r_up_m:
-                                if r_up_m.status == 200:
-                                    up_d_m = await r_up_m.json()
-                                    v_pass = up_d_m.get("result")
-                        except Exception:
-                            pass
                     if v_pass:
                         if isinstance(v_pass, str) and v_pass.strip().startswith("{"):
                             try:
@@ -502,7 +556,7 @@ async def test_live_15_bots_probe():
 
 async def main():
     print("=" * 70)
-    print("🔍 COMPREHENSIVE LIVE SYSTEM & 14-BOT FLEET HEALTH VERIFICATION")
+    print("🔍 COMPREHENSIVE LIVE SYSTEM & 12-BOT FLEET HEALTH VERIFICATION")
     print("=" * 70)
     await test_cf_nodes()
     await test_render_nodes()

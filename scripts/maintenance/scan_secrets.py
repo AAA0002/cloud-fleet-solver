@@ -62,6 +62,12 @@ RULES = [
         "severity": "CRITICAL"
     },
     {
+        "id": "turso-db-token",
+        "name": "Hardcoded Turso Database Token",
+        "pattern": re.compile(r'(?i)(?:TURSO_DB_TOKEN|TURSO_TOKEN)\s*[:=]\s*[\'"](eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})[\'"]'),
+        "severity": "CRITICAL"
+    },
+    {
         "id": "pinata-jwt-token",
         "name": "Hardcoded Pinata/Cloud JWT",
         "pattern": re.compile(r'(?i)(?:PINATA_JWT|BEARER_TOKEN)\s*[:=]\s*[\'"](eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})[\'"]'),
