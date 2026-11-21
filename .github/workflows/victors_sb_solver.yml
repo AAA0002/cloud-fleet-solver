@@ -49,6 +49,8 @@ jobs:
           UPSTASH_REDIS_REST_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
           UPSTASH_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
           UPSTASH_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
+          TURSO_DB_URL: "${{ secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_DB_TOKEN: "${{ secrets.TURSO_DB_TOKEN }}"
           ALERT_BOT_TOKEN: "${{ secrets.ALERT_BOT_TOKEN || secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN }}"
           REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
