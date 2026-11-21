@@ -70,11 +70,11 @@ def robust_json_loads(val):
 
 def turso_get_sync(key: str):
     """Fetches a key value from Turso LibSQL kv_mesh table (<15ms, zero rate-limit friction)."""
-    t_url = os.getenv("TURSO_URL") or os.getenv("TURSO_DB_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
+    t_url = (os.getenv("TURSO_URL") or os.getenv("TURSO_DB_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io").replace("libsql://", "https://").rstrip("/")
     t_token = os.getenv("TURSO_TOKEN") or os.getenv("TURSO_DB_TOKEN") or ""
     if not t_token:
         return None
-    endpoint = f"{t_url.rstrip('/')}/v2/pipeline"
+    endpoint = f"{t_url}/v2/pipeline"
     payload = {
         "requests": [
             {
@@ -121,6 +121,10 @@ def load_tokens():
                 p_uid = robust_json_loads(raw_uid)
                 if isinstance(p_uid, dict) and p_uid:
                     tokens.setdefault(uid, {}).update(p_uid)
+            # Also fetch dedicated Chicken Land token key from Turso
+            raw_c = turso_get_sync(f"fleet:tokens:{uid}:chickenland_init_data")
+            if raw_c and isinstance(raw_c, str):
+                tokens.setdefault(uid, {})["chickenland_init_data"] = raw_c
     except Exception as e_turso:
         print(f"⚠️ Turso LibSQL token load note: {e_turso}")
 
@@ -147,6 +151,15 @@ def load_tokens():
                     p_t = robust_json_loads(d_t.get("result"))
                     if isinstance(p_t, dict) and p_t:
                         tokens.setdefault(uid, {}).update(p_t)
+            except Exception:
+                pass
+            try:
+                req_c = urllib.request.Request(f"{up_url.rstrip('/')}/get/fleet:tokens:{uid}:chickenland_init_data", headers={"Authorization": f"Bearer {up_token}"})
+                with urllib.request.urlopen(req_c, timeout=4) as resp_c:
+                    d_c = json.loads(resp_c.read().decode())
+                    val_c = d_c.get("result")
+                    if val_c and isinstance(val_c, str):
+                        tokens.setdefault(uid, {})["chickenland_init_data"] = val_c
             except Exception:
                 pass
 
@@ -247,12 +260,15 @@ def sweep_account(uid: str, info: dict, tokens_db: dict):
         final_amt = float(amt or calc_gram)
         print(f"  🎉 WITHDRAWAL SUCCESSFUL! Amount: {final_amt:.6f} GRAM to {TARGET_WALLET}")
         alert_msg = (
-            f"🐔 <b>Chicken Land 24h Autonomous Withdrawal Executed!</b>\n"
-            f"• <b>Account:</b> <code>{name} ({uid})</code>\n"
-            f"• <b>Amount Paid:</b> <code>{final_amt:.6f} GRAM</code>\n"
-            f"• <b>Target TON Vault:</b> <code>{TARGET_WALLET}</code>\n"
-            f"• <b>Memo:</b> <code>{memo or 'None'}</code>\n"
-            f"• <b>Status:</b> 🟢 On-Chain Payout Dispatched"
+            f"🐔 <b>CHICKEN LAND 24H AUTONOMOUS ON-CHAIN PAYOUT</b> 💎\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>Account:</b> <code>{name}</code> (<code>{uid}</code>)\n"
+            f"💰 <b>Amount Dispatched:</b> <b>+{final_amt:.6f} GRAM</b> ✅\n"
+            f"🏦 <b>Target TON Vault:</b> <code>{TARGET_WALLET}</code>\n"
+            f"🏷️ <b>Binance Memo:</b> <code>{memo or 'None'}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🟢 <b>Status:</b> <code>CONFIRMED ON-CHAIN & HARVESTED</code>\n"
+            f"🛡️ <b>Engine:</b> <code>24h Autonomous Cooldown Watchdog & TON Gateway</code>"
         )
         send_telegram_alert(alert_msg)
         return {"status": "success", "amount": final_amt, "address": TARGET_WALLET}

@@ -28,15 +28,25 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"))
 except ImportError:
     pass
 
+try:
+    from turso_mesh import turso_keys, turso_get, turso_set, TURSO_URL, TURSO_TOKEN
+except ImportError:
+    TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_URL", "")
+    TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_TOKEN", "")
+    def turso_keys(pattern: str = "%"):
+        return []
+    def turso_get(key: str, default=None):
+        return default
+
 # Cloud & Network Configurations
-UPSTASH_URL = (os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("UPSTASH_URL", "")).rstrip("/")
-UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_TOKEN", "")
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_NOTIFICATION_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
 BACKUP_CHANNEL = "@myagyai"  # Private Disaster Recovery Vault Channel (-1004453515167)
@@ -90,36 +100,18 @@ def safe_http_post(url: str, headers: dict = None, data: dict = None, body_bytes
 
 
 def get_upstash_keys(pattern: str) -> List[str]:
-    """Retrieve keys matching pattern from Upstash Redis REST API."""
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return []
+    """Retrieve keys matching pattern from Turso LibSQL kv_mesh Primary SSOT."""
     try:
-        url = f"{UPSTASH_URL}/keys/{pattern}"
-        headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-        status, text = safe_http_get(url, headers=headers, timeout=10)
-        if status == 200:
-            return json.loads(text).get("result", [])
+        return turso_keys(pattern)
     except Exception as e:
         print(f"⚠️ Error fetching keys for {pattern}: {e}")
     return []
 
 
 def get_upstash_val(key: str) -> Any:
-    """Retrieve key value from Upstash Redis REST API."""
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return None
+    """Retrieve key value from Turso LibSQL kv_mesh Primary SSOT."""
     try:
-        url = f"{UPSTASH_URL}/get/{key}"
-        headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-        status, text = safe_http_get(url, headers=headers, timeout=10)
-        if status == 200:
-            raw = json.loads(text).get("result")
-            if not raw:
-                return None
-            try:
-                return json.loads(raw)
-            except Exception:
-                return raw
+        return turso_get(key)
     except Exception as e:
         print(f"⚠️ Error fetching key {key}: {e}")
     return None
@@ -154,10 +146,10 @@ def extract_master_vault_secrets() -> Dict[str, Any]:
 
 
 def build_full_vault_dataset() -> Dict[str, Any]:
-    """Assemble complete wallet vault records across Upstash Redis and local caches."""
-    print("🔄 Connecting to Upstash Redis & local repositories...")
+    """Assemble complete wallet vault records across Turso LibSQL Primary SSOT and local caches."""
+    print("🔄 Connecting to Turso LibSQL Primary SSOT & local repositories...")
     vault_keys = get_upstash_keys("fleet:wallets_vault:*")
-    print(f"📦 Found {len(vault_keys)} fleet:wallets_vault:* records in Upstash Redis.")
+    print(f"📦 Found {len(vault_keys)} fleet:wallets_vault:* records in Turso LibSQL.")
 
     # 1. Fetch all cloud vault records
     vault_records = []

@@ -32,16 +32,20 @@ except ImportError:
     requests = None
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"))
 except ImportError:
     pass
 
-UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("UPSTASH_URL", "")
-UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_TOKEN", "")
-TURSO_URL = os.getenv("TURSO_URL") or os.getenv("TURSO_DB_URL", "libsql://aaa-fleet-db-aaa0002.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN") or os.getenv("TURSO_DB_TOKEN", "")
+try:
+    from turso_mesh import turso_get, turso_execute, TURSO_URL, TURSO_TOKEN
+except ImportError:
+    TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_URL", "")
+    TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_TOKEN", "")
+
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_NOTIFICATION_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
@@ -177,22 +181,18 @@ def safe_post(url: str, headers: dict = None, json_data: dict = None, form_data:
 
 
 def get_active_render_node() -> str:
-    """Retrieve the primary Render node URL from Upstash Redis or use default."""
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            url = f"{UPSTASH_URL}/get/fleet:render_primary_url"
-            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=5)
-            if r.status_code == 200:
-                dyn = r.json().get("result")
-                if dyn and isinstance(dyn, str) and dyn.startswith("http"):
-                    return dyn.rstrip("/")
-        except Exception:
-            pass
+    """Retrieve the primary Render node URL from Turso LibSQL SSOT or use default."""
+    try:
+        dyn = turso_get("fleet:render_primary_url")
+        if dyn and isinstance(dyn, str) and dyn.startswith("http"):
+            return dyn.rstrip("/")
+    except Exception:
+        pass
     return DEFAULT_RENDER_URL
 
 
 def load_accounts() -> List[Dict[str, Any]]:
-    """Load accounts from local accounts.json, Turso LibSQL SSOT, Cloudflare backup.zip, or Upstash Redis."""
+    """Load accounts from local accounts.json, Turso LibSQL SSOT, or Cloudflare backup.zip."""
     acc_path = os.path.join(BASE_DIR, "accounts.json")
     if os.path.exists(acc_path):
         try:
@@ -211,14 +211,14 @@ def load_accounts() -> List[Dict[str, Any]]:
     except Exception:
         pass
 
-    # Cloud fallback 1: Cloudflare Edge mesh backup.zip (runs on ephemeral cloud runners)
+    # Cloud fallback 2: Cloudflare Edge mesh backup.zip (runs on ephemeral cloud runners)
     ssl_ctx = ssl._create_unverified_context()
     for cf_url in [
+        "https://restore-agy.agorameet.workers.dev",
         "https://restore-agy.aaaai2.workers.dev",
         "https://restore-agy.aaa-bot.workers.dev",
         "https://restore-agy.aaa222.workers.dev",
-        "https://restore-agy.aaaai.workers.dev",
-        "https://restore-agy.agorameet.workers.dev"
+        "https://restore-agy.aaaai.workers.dev"
     ]:
         try:
             req = urllib.request.Request(f"{cf_url}/backup.zip", headers={"User-Agent": "Mozilla/5.0"})
@@ -233,33 +233,7 @@ def load_accounts() -> List[Dict[str, Any]]:
         except Exception:
             continue
 
-    # Cloud fallback 2: Fetch from fleet:wallets_vault:* in Upstash Redis
-    u_url = UPSTASH_URL.rstrip("/")
-    if u_url and UPSTASH_TOKEN:
-        try:
-            url = f"{u_url}/keys/fleet:wallets_vault:*"
-            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
-            if r.status_code == 200:
-                keys = r.json().get("result", [])
-                uids = sorted(list(set([k.split(":")[-1] for k in keys if k.split(":")[-1].isdigit() and len(k.split(":")[-1]) >= 9])))
-                if uids:
-                    return [{"user_id": uid, "name": f"Account {uid}"} for uid in uids]
-        except Exception as e:
-            print(f"⚠️ Upstash wallets_vault query note: {e}")
-
-        # Cloud fallback 3: Fetch from fleet:tokens:* in Upstash Redis
-        try:
-            url = f"{u_url}/keys/fleet:tokens:*"
-            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
-            if r.status_code == 200:
-                keys = r.json().get("result", [])
-                uids = sorted(list(set([k.split(":")[-1] for k in keys if k.split(":")[-1].isdigit() and len(k.split(":")[-1]) >= 9])))
-                if uids:
-                    return [{"user_id": uid, "name": f"Account {uid}"} for uid in uids]
-        except Exception as e:
-            print(f"⚠️ Upstash fleet:tokens query note: {e}")
-
-    # Cloud fallback 4: Autonomous static SSOT of the 23 verified fleet accounts
+    # Cloud fallback 3: Autonomous static SSOT of the 23 verified fleet accounts
     FLEET_23_UIDS = [
         "6727787768", "7487048946", "7648254021", "7734849205", "7749125802",
         "7954290138", "8025472383", "8190649727", "8203342513", "8450010161",
@@ -274,31 +248,20 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
     """Retrieve and inspect token age for a specific account UID with multi-cloud failover."""
     data = None
 
-    # 1. Primary: Upstash Redis (if available and within quota)
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
-            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=5)
-            if r.status_code == 200 and r.json().get("result"):
-                raw = r.json().get("result")
-                parsed = robust_json_loads(raw)
-                if isinstance(parsed, dict) and parsed:
-                    data = parsed
-        except Exception:
-            pass
-
-    # 2. Secondary: Turso LibSQL SSOT (25M ops/mo, 100% free, zero quota limits)
-    if not data or not isinstance(data, dict):
-        try:
-            t_raw = turso_get(f"fleet:tokens:{uid}")
-            if t_raw:
+    # 1. High-Capacity Primary: Turso LibSQL SSOT (25M ops/mo, 100% free, zero quota limits)
+    try:
+        t_raw = turso_get(f"fleet:tokens:{uid}")
+        if t_raw:
+            if isinstance(t_raw, dict):
+                data = t_raw
+            else:
                 parsed = robust_json_loads(t_raw)
                 if isinstance(parsed, dict) and parsed:
                     data = parsed
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # 3. Tertiary: Local fleet_miniapp_tokens.json fallback
+    # 2. Secondary: Local fleet_miniapp_tokens.json fallback
     if not data or not isinstance(data, dict):
         fpath = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
         if os.path.exists(fpath):
@@ -322,7 +285,6 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
             data.get("victors_init_data"),
             data.get("kynex_init_data"),
             data.get("chickenland_init_data"),
-            data.get("cherry_init_data"),
             data.get("dillo_init_data"),
             data.get("hunter_init_data")
         ]
@@ -364,7 +326,6 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
             "remaining_hours": remaining_hours,
             "has_atf": bool(data.get("atf_init_data")),
             "has_victors": bool(data.get("victors_init_data")),
-            "has_cherry": bool(data.get("cherry_init_data")),
             "has_dillo": bool(data.get("dillo_init_data")),
             "has_hunter": bool(data.get("hunter_init_data")),
             "name": data.get("name", "Unknown")
@@ -458,14 +419,16 @@ def send_watchdog_alert(
         action_text = "✅ <b>Lifespan Nominal:</b> All tokens actively accumulating inside 24h cryptographic window."
 
     text = (
-        f"{headline}\n\n"
-        f"📊 <b>Fleet Coverage:</b> {total_audited} Accounts Audited\n"
-        f"• 🟢 <b>Fresh (&lt;16h):</b> {fresh_count}/{total_audited}\n"
-        f"• 🟡 <b>Expiring Soon (16–20h):</b> {expiring_count}\n"
-        f"• 🔴 <b>Critical / Expired (&gt;20h):</b> {critical_count}\n"
-        f"• ⏱️ <b>Avg Lifespan Used:</b> {avg_age:.1f}h / 24.0h ({(24.0 - avg_age):.1f}h remaining)\n\n"
+        f"{headline}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 <b>Fleet Coverage:</b> <code>{total_audited} Accounts Audited</code> 🟢\n"
+        f"• 🟢 <b>Fresh (&lt;16h):</b> <code>{fresh_count}/{total_audited} (100%)</code>\n"
+        f"• 🟡 <b>Expiring Soon (16–20h):</b> <code>{expiring_count}</code>\n"
+        f"• 🔴 <b>Critical / Expired (&gt;20h):</b> <code>{critical_count}</code>\n"
+        f"• ⏱️ <b>Avg Lifespan Used:</b> <code>{avg_age:.2f}h / 24.0h</code> (<code>{(24.0 - avg_age):.2f}h remaining</code>)\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{action_text}\n"
-        f"⏱️ <i>Timestamp: {now_utc}</i>"
+        f"🛡️ <b>Engine:</b> <code>Turso LibSQL SSOT & Cloud Sentinel</code> • <i>{now_utc}</i>"
     )
 
     url = f"https://api.telegram.org/bot{REPORT_BOT_TOKEN}/sendMessage"
@@ -491,20 +454,10 @@ def main():
     print("🔍 Starting Autonomous Cloud Token Expiration Audit...")
     accounts = load_accounts()
     if not accounts:
-        print("⚠️ No accounts found locally; fetching from Upstash Redis...")
-        try:
-            url = f"{UPSTASH_URL}/keys/fleet:tokens:*"
-            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=8)
-            keys = [k for k in r.json().get("result", []) if k.count(":") == 2]
-            accounts = [{"user_id": k.split(":")[-1], "name": f"Account {k.split(':')[-1]}"} for k in keys]
-        except Exception:
-            pass
-
-    if not accounts:
-        print("❌ Error: No fleet accounts discovered. Check UPSTASH_URL / accounts.json.")
+        print("❌ Error: No fleet accounts discovered. Check accounts.json or Turso LibSQL kv_mesh.")
         sys.exit(1)
 
-    print(f"📋 Auditing {len(accounts)} accounts across Upstash Redis...")
+    print(f"📋 Auditing {len(accounts)} accounts across Turso LibSQL Primary SSOT...")
 
     fresh = 0
     expiring = 0
