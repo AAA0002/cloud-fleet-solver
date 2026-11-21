@@ -31,8 +31,6 @@ if os.path.exists(env_file):
                 k, v = line.split("=", 1)
                 env[k.strip()] = v.strip().strip("\"'")
 
-UPSTASH_URL = os.getenv("UPSTASH_URL") or env.get("UPSTASH_URL")
-UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or env.get("UPSTASH_TOKEN")
 TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or env.get("TURSO_DB_TOKEN") or env.get("TURSO_TOKEN", "")
 TURSO_URL = "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io/v2/pipeline"
 CF_SECRET_KEY = os.getenv("CF_SECRET_KEY") or env.get("CF_SECRET_KEY", "")
