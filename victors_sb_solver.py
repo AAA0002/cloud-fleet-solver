@@ -142,7 +142,7 @@ def robust_json_loads(val):
 
 
 def load_fleet_ton_wallets() -> dict:
-    """Fetch fleet TON wallets from local JSON or Upstash Redis."""
+    """Fetch fleet TON wallets from local JSON, Turso LibSQL SSOT, or Upstash Redis."""
     local_path = os.path.join(BASE_DIR, "fleet_ton_wallets.json")
     if os.path.exists(local_path):
         try:
@@ -152,13 +152,39 @@ def load_fleet_ton_wallets() -> dict:
         except Exception:
             pass
 
+    # 1. Primary: Turso LibSQL SSOT
+    if TURSO_URL and TURSO_TOKEN:
+        try:
+            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+            t_req = json.dumps({
+                "requests": [
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'fleet:wallets:ton' LIMIT 1;", "args": []}},
+                    {"type": "close"}
+                ]
+            }).encode()
+            req = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode())
+                results = data.get("results", [])
+                if results:
+                    rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                    if rows:
+                        raw_v = rows[0][0].get("value")
+                        if raw_v:
+                            d = robust_json_loads(raw_v)
+                            if isinstance(d, dict) and d:
+                                return d
+        except Exception:
+            pass
+
+    # 2. Secondary: Upstash Redis
     if UPSTASH_URL and UPSTASH_TOKEN:
         try:
             req = urllib.request.Request(
                 f"{UPSTASH_URL}/get/fleet:wallets:ton",
                 headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
             )
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with urllib.request.urlopen(req, timeout=8) as resp:
                 data = json.loads(resp.read().decode())
                 res = data.get("result")
                 if res:
@@ -170,7 +196,7 @@ def load_fleet_ton_wallets() -> dict:
 
 
 def load_all_miniapp_tokens() -> dict:
-    """Fetch miniapp_tokens master dictionary from local file or Upstash Redis."""
+    """Fetch miniapp_tokens master dictionary from local file, Turso LibSQL SSOT, or Upstash Redis."""
     local_path = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
     if os.path.exists(local_path):
         try:
@@ -180,13 +206,39 @@ def load_all_miniapp_tokens() -> dict:
         except Exception:
             pass
 
+    # 1. Primary: Turso LibSQL SSOT (zero rate limits, 25M ops/mo)
+    if TURSO_URL and TURSO_TOKEN:
+        try:
+            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+            t_req = json.dumps({
+                "requests": [
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'miniapp_tokens' OR key = 'fleet:tokens_state' LIMIT 1;", "args": []}},
+                    {"type": "close"}
+                ]
+            }).encode()
+            req = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode())
+                results = data.get("results", [])
+                if results:
+                    rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                    if rows:
+                        raw_v = rows[0][0].get("value")
+                        if raw_v:
+                            d = robust_json_loads(raw_v)
+                            if isinstance(d, dict) and d:
+                                return d
+        except Exception as e_t:
+            logger.debug(f"Turso miniapp_tokens fetch note: {e_t}")
+
+    # 2. Secondary: Upstash Redis
     if UPSTASH_URL and UPSTASH_TOKEN:
         try:
             req = urllib.request.Request(
                 f"{UPSTASH_URL}/get/miniapp_tokens",
                 headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
             )
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with urllib.request.urlopen(req, timeout=8) as resp:
                 data = json.loads(resp.read().decode())
                 res = data.get("result")
                 if res:
@@ -198,7 +250,40 @@ def load_all_miniapp_tokens() -> dict:
 
 
 def get_token_from_upstash(uid: int) -> dict:
-    """Fetch tokens for a specific account from Upstash Redis."""
+    """Fetch tokens for a specific account from Turso LibSQL SSOT or Upstash Redis."""
+    # 1. Primary: Turso LibSQL SSOT (zero rate limits)
+    if TURSO_URL and TURSO_TOKEN:
+        try:
+            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+            t_req = json.dumps({
+                "requests": [
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = ? LIMIT 1;", "args": [{"type": "text", "value": f"fleet:tokens:{uid}"}]}},
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = ? LIMIT 1;", "args": [{"type": "text", "value": f"fleet:tokens:{uid}:victors_init_data"}]}},
+                    {"type": "close"}
+                ]
+            }).encode()
+            req = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode())
+                results = data.get("results", [])
+                if results:
+                    rows0 = results[0].get("response", {}).get("result", {}).get("rows", [])
+                    if rows0:
+                        raw_v = rows0[0][0].get("value")
+                        if raw_v:
+                            d = robust_json_loads(raw_v)
+                            if isinstance(d, dict) and d:
+                                return d
+                    if len(results) > 1:
+                        rows1 = results[1].get("response", {}).get("result", {}).get("rows", [])
+                        if rows1:
+                            raw_v1 = rows1[0][0].get("value")
+                            if raw_v1 and isinstance(raw_v1, str):
+                                return {"victors_init_data": raw_v1}
+        except Exception as te:
+            logger.debug(f"Turso token fetch note for UID {uid}: {te}")
+
+    # 2. Secondary: Upstash Redis
     if not (UPSTASH_URL and UPSTASH_TOKEN):
         return {}
     try:
@@ -206,7 +291,7 @@ def get_token_from_upstash(uid: int) -> dict:
             f"{UPSTASH_URL}/get/fleet:tokens:{uid}",
             headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode())
             res = data.get("result")
             if res:
