@@ -230,6 +230,37 @@ def turso_mset(mapping: Dict[str, Any]) -> bool:
     res = turso_execute_batch(requests)
     return res is not None
 
+def turso_sadd(key: str, member: str) -> bool:
+    """Adds a member to a set stored in kv_mesh as a JSON array."""
+    cur = turso_get(key)
+    cur_list = cur if isinstance(cur, list) else ([cur] if cur is not None else [])
+    member_str = str(member)
+    if member_str not in [str(x) for x in cur_list]:
+        cur_list.append(member_str)
+        return turso_set(key, cur_list)
+    return True
+
+def turso_srem(key: str, member: str) -> bool:
+    """Removes a member from a set stored in kv_mesh as a JSON array."""
+    cur = turso_get(key)
+    if not cur:
+        return True
+    cur_list = cur if isinstance(cur, list) else [cur]
+    member_str = str(member)
+    filtered = [x for x in cur_list if str(x) != member_str]
+    if len(filtered) != len(cur_list):
+        return turso_set(key, filtered)
+    return True
+
+def turso_smembers(key: str) -> List[str]:
+    """Retrieves all members of a set stored in kv_mesh as a JSON array."""
+    cur = turso_get(key)
+    if not cur:
+        return []
+    if isinstance(cur, list):
+        return [str(x) for x in cur]
+    return [str(cur)]
+
 # ==============================================================================
 # 100% Drop-In Compatibility Aliases for Legacy Upstash Callers
 # All calls to Upstash Redis automatically route through high-quota Turso Mesh
@@ -239,6 +270,9 @@ upstash_set = turso_set
 upstash_del = turso_delete
 upstash_delete = turso_delete
 upstash_keys = turso_keys
+upstash_sadd = turso_sadd
+upstash_srem = turso_srem
+upstash_smembers = turso_smembers
 get_upstash = turso_get
 set_upstash = turso_set
 sync_upstash_key = turso_set
