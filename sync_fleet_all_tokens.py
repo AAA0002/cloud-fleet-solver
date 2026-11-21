@@ -57,16 +57,20 @@ EXCLUDED_UIDS = {"8881914294", "tokens"}
 TOKEN_KEYS = [
     "atf_init_data",
     "kynex_init_data",
+    "kynex_refresh_token",
     "pepegram_init_data",
     "adxearn_init_data",
     "chickenland_init_data",
     "earnvault_init_data",
+    "earnvault_refresh_token",
+    "earnvault_cents",
     "mexo_init_data",
     "mexo_token",
     "myage_init_data",
     "lifetime_energy_init_data",
     "lifetime_init_data",
     "victors_init_data",
+    "victors_pass",
     "victors_human_pass",
     "dillo_init_data",
     "dillo",
@@ -95,18 +99,23 @@ def get_token_timestamp(val) -> int:
     return 1
 
 
-def pick_best_token(*candidates) -> str:
-    """Selects the candidate token with the highest (freshest) auth_date timestamp."""
-    best_val = ""
+def pick_best_token(*candidates):
+    """Selects the candidate token with the highest (freshest) auth_date timestamp or best non-empty value."""
+    best_val = None
     best_ts = -1
     for c in candidates:
-        if not c or not isinstance(c, str):
+        if c is None or c == "":
             continue
-        ts = get_token_timestamp(c)
-        if ts > best_ts:
-            best_ts = ts
+        if isinstance(c, (int, float)):
+            return c
+        if isinstance(c, str):
+            ts = get_token_timestamp(c)
+            if ts > best_ts:
+                best_ts = ts
+                best_val = c
+        elif c:
             best_val = c
-    return best_val
+    return best_val or ""
 
 from turso_mesh import turso_get, turso_set, turso_keys, turso_mget
 
@@ -232,6 +241,11 @@ def main():
             merged_tokens["chicken_init_data"] = merged_tokens["chickenland_init_data"]
         elif merged_tokens.get("chicken_init_data") and not merged_tokens.get("chickenland_init_data"):
             merged_tokens["chickenland_init_data"] = merged_tokens["chicken_init_data"]
+
+        if merged_tokens.get("earnvault_init_data") and not merged_tokens.get("ev_init_data"):
+            merged_tokens["ev_init_data"] = merged_tokens["earnvault_init_data"]
+        elif merged_tokens.get("ev_init_data") and not merged_tokens.get("earnvault_init_data"):
+            merged_tokens["earnvault_init_data"] = merged_tokens["ev_init_data"]
 
         if merged_tokens.get("mexo_init_data") and not merged_tokens.get("mexoearn_init_data"):
             merged_tokens["mexoearn_init_data"] = merged_tokens["mexo_init_data"]
