@@ -13,9 +13,9 @@ and leftover third-party sponsor channels across all fleet accounts:
    - Retains only the 3 newest local backup zips and encrypted snapshots in backups/
    - Cleans old task logs older than 72 hours
 
-2. Upstash Redis State Pruning:
+2. Turso LibSQL State Pruning:
    - Deletes obsolete test keys (test_key, test_key_1, test_key_2)
-   - Deletes legacy individual token subkeys (fleet:tokens:*:chickenland_init_data, etc.)
+   - Deletes defunct bot keys across all 37 defunct bots
    - Trims fleet:payouts:history to the 100 most recent records
    - Trims fleet:sentinel:history or debug logs
    - Purges orphaned lock keys (lock:* or fleet:lock:*)

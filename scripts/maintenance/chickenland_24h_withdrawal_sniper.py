@@ -128,42 +128,7 @@ def load_tokens():
     except Exception as e_turso:
         print(f"⚠️ Turso LibSQL token load note: {e_turso}")
 
-    # 2. Cloud-First Mirror: Fetch fresh tokens from Upstash Redis if missing
-    up_url = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL")
-    up_token = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN")
-    if up_url and up_token and not tokens:
-        try:
-            req = urllib.request.Request(f"{up_url.rstrip('/')}/get/miniapp_tokens", headers={"Authorization": f"Bearer {up_token}"})
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                data = json.loads(resp.read().decode())
-                parsed = robust_json_loads(data.get("result"))
-                if isinstance(parsed, dict):
-                    tokens.update(parsed)
-        except Exception as e:
-            print(f"⚠️ Note: Failed to load miniapp_tokens from Upstash Redis: {e}")
-
-        # Also probe fleet:tokens:{uid} for dedicated accounts
-        for uid in ACCOUNTS_MAP.keys():
-            try:
-                req_t = urllib.request.Request(f"{up_url.rstrip('/')}/get/fleet:tokens:{uid}", headers={"Authorization": f"Bearer {up_token}"})
-                with urllib.request.urlopen(req_t, timeout=4) as resp_t:
-                    d_t = json.loads(resp_t.read().decode())
-                    p_t = robust_json_loads(d_t.get("result"))
-                    if isinstance(p_t, dict) and p_t:
-                        tokens.setdefault(uid, {}).update(p_t)
-            except Exception:
-                pass
-            try:
-                req_c = urllib.request.Request(f"{up_url.rstrip('/')}/get/fleet:tokens:{uid}:chickenland_init_data", headers={"Authorization": f"Bearer {up_token}"})
-                with urllib.request.urlopen(req_c, timeout=4) as resp_c:
-                    d_c = json.loads(resp_c.read().decode())
-                    val_c = d_c.get("result")
-                    if val_c and isinstance(val_c, str):
-                        tokens.setdefault(uid, {})["chickenland_init_data"] = val_c
-            except Exception:
-                pass
-
-    # 3. Local Fallback: Merge local fleet_miniapp_tokens.json
+    # 2. Local Fallback: Merge local fleet_miniapp_tokens.json
     tok_file = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
     if os.path.exists(tok_file):
         try:

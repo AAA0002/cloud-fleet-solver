@@ -261,6 +261,11 @@ def turso_smembers(key: str) -> List[str]:
         return [str(x) for x in cur]
     return [str(cur)]
 
+def turso_sismember(key: str, member: str) -> bool:
+    """Checks if a member exists in a set stored in kv_mesh as a JSON array."""
+    members = turso_smembers(key)
+    return str(member) in members
+
 # ==============================================================================
 # 100% Drop-In Compatibility Aliases for Legacy Upstash Callers
 # All calls to Upstash Redis automatically route through high-quota Turso Mesh
@@ -270,9 +275,12 @@ upstash_set = turso_set
 upstash_del = turso_delete
 upstash_delete = turso_delete
 upstash_keys = turso_keys
+upstash_mget = turso_mget
+upstash_mset = turso_mset
 upstash_sadd = turso_sadd
 upstash_srem = turso_srem
 upstash_smembers = turso_smembers
+upstash_sismember = turso_sismember
 get_upstash = turso_get
 set_upstash = turso_set
 sync_upstash_key = turso_set

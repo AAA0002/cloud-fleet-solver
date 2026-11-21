@@ -39,8 +39,6 @@ MASTER_EVM_VAULT = "0xfda4182001672b9f0f09e2118242e543e35ed5ce"
 
 TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
 TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_AUTH_TOKEN") or ""
-UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
 
 if os.path.exists(os.path.join(BASE_DIR, ".env")):
     try:
@@ -51,8 +49,6 @@ if os.path.exists(os.path.join(BASE_DIR, ".env")):
                     v_clean = v.strip("\"' ")
                     if ("TURSO_DB_TOKEN" in k or "TURSO_TOKEN" in k) and not TURSO_TOKEN:
                         TURSO_TOKEN = v_clean
-                    elif ("UPSTASH_TOKEN" in k or "UPSTASH_REDIS_REST_TOKEN" in k) and not UPSTASH_TOKEN:
-                        UPSTASH_TOKEN = v_clean
     except Exception:
         pass
 

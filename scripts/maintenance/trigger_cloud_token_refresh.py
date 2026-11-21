@@ -172,7 +172,7 @@ def main():
             f"• <b>Coordinator Node:</b> Render Oregon Node 3\n"
             f"• <b>Status:</b> 🟢 Batch Dispatched ({queued} Accounts Queued)\n"
             "• <b>Schedule:</b> 12-Hour Autonomous Cloud Watchdog\n"
-            "• <b>Coverage:</b> All 13 Active Mining Pools\n"
+            "• <b>Coverage:</b> All 12 Active Mining Pools\n"
             "• <b>Execution:</b> 100% Cloud (0% Phone Load)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )

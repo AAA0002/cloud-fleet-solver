@@ -90,27 +90,18 @@ def load_data():
         except Exception:
             pass
 
-    # Cloud fallback for GitHub Actions / cloud runners
-    up_url = os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("UPSTASH_URL")
-    up_tok = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_TOKEN")
-    if (not accounts or not tokens) and up_url and up_tok:
+    # Cloud fallback for GitHub Actions / cloud runners via Turso LibSQL Primary SSOT
+    if not accounts or not tokens:
         try:
-            import urllib.request
-            headers = {"Authorization": f"Bearer {up_tok}"}
+            from turso_mesh import turso_get
             if not accounts:
-                req_a = urllib.request.Request(f"{up_url}/get/fleet:accounts", headers=headers)
-                with urllib.request.urlopen(req_a, timeout=6) as r:
-                    d = json.loads(r.read().decode())
-                    res_a = robust_json_loads(d.get("result"))
-                    if isinstance(res_a, list):
-                        accounts = res_a
+                res_a = turso_get("fleet:accounts")
+                if isinstance(res_a, list):
+                    accounts = res_a
             if not tokens:
-                req_t = urllib.request.Request(f"{up_url}/get/miniapp_tokens", headers=headers)
-                with urllib.request.urlopen(req_t, timeout=6) as r:
-                    d = json.loads(r.read().decode())
-                    res_t = robust_json_loads(d.get("result"))
-                    if isinstance(res_t, dict):
-                        tokens = res_t
+                res_t = turso_get("miniapp_tokens")
+                if isinstance(res_t, dict):
+                    tokens = res_t
         except Exception:
             pass
 

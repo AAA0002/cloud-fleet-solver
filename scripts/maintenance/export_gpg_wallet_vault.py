@@ -99,7 +99,7 @@ def safe_http_post(url: str, headers: dict = None, data: dict = None, body_bytes
         return 0, str(e)
 
 
-def get_upstash_keys(pattern: str) -> List[str]:
+def get_turso_keys(pattern: str) -> List[str]:
     """Retrieve keys matching pattern from Turso LibSQL kv_mesh Primary SSOT."""
     try:
         return turso_keys(pattern)
@@ -108,7 +108,7 @@ def get_upstash_keys(pattern: str) -> List[str]:
     return []
 
 
-def get_upstash_val(key: str) -> Any:
+def get_turso_val(key: str) -> Any:
     """Retrieve key value from Turso LibSQL kv_mesh Primary SSOT."""
     try:
         return turso_get(key)
@@ -148,22 +148,22 @@ def extract_master_vault_secrets() -> Dict[str, Any]:
 def build_full_vault_dataset() -> Dict[str, Any]:
     """Assemble complete wallet vault records across Turso LibSQL Primary SSOT and local caches."""
     print("🔄 Connecting to Turso LibSQL Primary SSOT & local repositories...")
-    vault_keys = get_upstash_keys("fleet:wallets_vault:*")
+    vault_keys = get_turso_keys("fleet:wallets_vault:*")
     print(f"📦 Found {len(vault_keys)} fleet:wallets_vault:* records in Turso LibSQL.")
 
     # 1. Fetch all cloud vault records
     vault_records = []
     for vk in sorted(vault_keys):
-        rec = get_upstash_val(vk)
+        rec = get_turso_val(vk)
         if isinstance(rec, dict):
             vault_records.append(rec)
 
     # 2. Fetch master keys
-    ton_cloud = get_upstash_val("fleet:wallets:ton") or {}
-    evm_cloud = get_upstash_val("fleet:wallets:evm") or {}
-    tron_cloud = get_upstash_val("fleet:wallets:tron") or {}
-    sol_cloud = get_upstash_val("fleet:wallets:solana") or {}
-    btc_cloud = get_upstash_val("fleet:wallets:btc") or {}
+    ton_cloud = get_turso_val("fleet:wallets:ton") or {}
+    evm_cloud = get_turso_val("fleet:wallets:evm") or {}
+    tron_cloud = get_turso_val("fleet:wallets:tron") or {}
+    sol_cloud = get_turso_val("fleet:wallets:solana") or {}
+    btc_cloud = get_turso_val("fleet:wallets:btc") or {}
 
     # 3. Read local wallet files for full redundancy
     ton_local = read_local_json("fleet_ton_wallets.json") or {}
