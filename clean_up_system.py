@@ -6,7 +6,7 @@ Part of the AAA AUTO Cloud Fleet & Ephemeral Infrastructure.
 Enforces:
 1. Local Disk & Ephemeral Workspace Hygiene (prunes __pycache__, rotates logs, caps old backups).
 2. Phone Process Sanitation (Zero Phone Load - Rule 4: terminates rogue local loops).
-3. Upstash Redis Quota Protection (caps list lengths, purges stale keys, enforces TTLs).
+3. Turso LibSQL kv_mesh Sanitation (purges defunct bot keys, enforces Strict 12-Bot Integrity).
 4. GitHub Actions CI/CD History Pruning (cleans runs older than 5 days).
 5. Safe Boundaries (Strictly protects accounts.json, .env, and User Bot data - Rule 1).
 """
@@ -83,7 +83,7 @@ def _resolve_gh_pat() -> str:
     )
 
 GH_PAT = _resolve_gh_pat()
-GH_REPOS = ["AAA0002/ATL", "AAA0002/cloud-fleet-solver", "AAA0002/my-agy-fleet-standby"]
+GH_REPOS = ["AAA0002/ATL", "AAA0002/cloud-fleet-solver", "AAA0002/cloud-fleet-ops", "AAA0002/my-agy-fleet-standby"]
 
 # -----------------------------------------------------------------------------
 # 1. Local Workspace & Disk Sanitation
