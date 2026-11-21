@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
+from turso_mesh import turso_get, turso_set, turso_keys
+
 TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
 TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_AUTH_TOKEN") or ""
 
@@ -74,37 +74,6 @@ def load_tokens_db():
         except Exception as te:
             print(f"⚠️ Turso LibSQL tokens fetch note: {te}")
 
-    # 1. Secondary: Merge Upstash Redis (miniapp_tokens)
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            req = urllib.request.Request(
-                f"{UPSTASH_URL}/get/miniapp_tokens",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode())
-                raw = data.get("result")
-                while isinstance(raw, str):
-                    raw = json.loads(raw)
-                if isinstance(raw, dict) and len(raw) > 0:
-                    for uid, utoks in raw.items():
-                        if str(uid) == "8881914294":
-                            continue
-                        if uid not in tokens:
-                            tokens[uid] = utoks
-                        else:
-                            for tk, tv in utoks.items():
-                                if tv:
-                                    if tk not in tokens[uid] or not tokens[uid][tk]:
-                                        tokens[uid][tk] = tv
-                                    elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(tokens[uid].get(tk)):
-                                        tokens[uid][tk] = tv
-                                    elif not tk.endswith("_init_data") and tk not in tokens[uid]:
-                                        tokens[uid][tk] = tv
-                    print(f"Merged with Upstash Redis miniapp_tokens (total accounts: {len(tokens)})")
-        except Exception as e:
-            print(f"⚠️ Upstash miniapp_tokens fetch note: {e}")
-
     # 2. Merge local tokens with remote tokens
     for uid, acc in local_data.items():
         if str(uid) == "8881914294":
@@ -125,47 +94,6 @@ def load_tokens_db():
                 json.dump(tokens, f, indent=2)
         except Exception:
             pass
-
-    # 3. Tertiary: Upstash fleet:tokens:* pipeline fallback
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            req = urllib.request.Request(
-                f"{UPSTASH_URL}/keys/fleet:tokens:*",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode())
-                keys = data.get("result", [])
-                if keys:
-                    pipeline_cmds = [["GET", k] for k in keys]
-                    p_req = urllib.request.Request(
-                        f"{UPSTASH_URL}/pipeline",
-                        data=json.dumps(pipeline_cmds).encode(),
-                        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"}
-                    )
-                    with urllib.request.urlopen(p_req, timeout=8) as presp:
-                        pipeline_res = json.loads(presp.read().decode())
-                        for k, item in zip(keys, pipeline_res):
-                            parts = k.split(":")
-                            if len(parts) == 3 and parts[-1].isdigit():
-                                uid = parts[-1]
-                                if uid == "8881914294":
-                                    continue
-                                raw = item.get("result")
-                                if raw:
-                                    parsed = json.loads(raw) if isinstance(raw, str) else raw
-                                    if isinstance(parsed, dict):
-                                        if uid not in tokens:
-                                            tokens[uid] = parsed
-                                        else:
-                                            for tk, tv in parsed.items():
-                                                if tv:
-                                                    if tk not in tokens[uid] or not tokens[uid][tk]:
-                                                        tokens[uid][tk] = tv
-                                                    elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(tokens[uid].get(tk)):
-                                                        tokens[uid][tk] = tv
-        except Exception as e:
-            print(f"⚠️ Upstash fleet:tokens:* pipeline fetch note: {e}")
 
     return tokens
 
@@ -737,14 +665,9 @@ async def test_bot_farming_and_sidetasks(uid, name, tokens, acc_info):
         # 11. Victor's Company
         vic_init = tokens.get("victors_init_data")
         vic_pass = tokens.get("victors_human_pass") or tokens.get("victors_pass")
-        if not vic_pass and UPSTASH_URL and UPSTASH_TOKEN:
+        if not vic_pass:
             try:
-                async with session.get(f"{UPSTASH_URL}/get/victors:pass:{uid}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as p_resp:
-                    if p_resp.status == 200:
-                        p_data = await p_resp.json()
-                        r_pass = p_data.get("result")
-                        if r_pass:
-                            vic_pass = r_pass
+                vic_pass = turso_get(f"victors:pass:{uid}")
             except Exception:
                 pass
 
@@ -905,20 +828,13 @@ async def audit_single_account(acc, idx, total, tokens_db, sem):
                                         tokens[tk] = tv
                 except Exception:
                     pass
-            if not any(k.endswith("_init_data") for k in tokens.keys()) and UPSTASH_URL and UPSTASH_TOKEN:
+            if not any(k.endswith("_init_data") for k in tokens.keys()):
                 try:
-                    req = urllib.request.Request(
-                        f"{UPSTASH_URL}/get/fleet:tokens:{uid}",
-                        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-                    )
-                    with urllib.request.urlopen(req, timeout=5) as r:
-                        d = json.loads(r.read().decode())
-                        if d.get("result"):
-                            ind_tok = json.loads(d["result"]) if isinstance(d["result"], str) else d["result"]
-                            if isinstance(ind_tok, dict):
-                                for tk, tv in ind_tok.items():
-                                    if tv and (tk not in tokens or extract_auth_date(tv) >= extract_auth_date(tokens.get(tk))):
-                                        tokens[tk] = tv
+                    ind_tok = turso_get(f"fleet:tokens:{uid}")
+                    if isinstance(ind_tok, dict):
+                        for tk, tv in ind_tok.items():
+                            if tv and (tk not in tokens or extract_auth_date(tv) >= extract_auth_date(tokens.get(tk))):
+                                tokens[tk] = tv
                 except Exception:
                     pass
 

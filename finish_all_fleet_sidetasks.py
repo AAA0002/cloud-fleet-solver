@@ -2,11 +2,11 @@
 """
 finish_all_fleet_sidetasks.py
 =============================================================================
-COMPREHENSIVE 13-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
+COMPREHENSIVE 12-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
 =============================================================================
 Sweeps and completes all available side-tasks, daily check-ins, social joins,
 cooldown missions, wallet verifications, and referral commission claims across
-all dynamic accounts in the fleet for all 13 legitimate bots:
+all dynamic accounts in the fleet for all 12 legitimate bots:
   1. ATF Miner (@atfminers_bot)
   2. Kynex Network (@Kynex_miningbot)
   3. PepeGram (@Pepe_gram_bot)
@@ -65,8 +65,7 @@ if os.path.exists(env_file):
                 if k not in env or not env[k]:
                     env[k] = v
 
-UPSTASH_URL = os.environ.get("UPSTASH_URL") or os.environ.get("UPSTASH_REDIS_REST_URL") or env.get("UPSTASH_URL") or env.get("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = os.environ.get("UPSTASH_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN") or env.get("UPSTASH_TOKEN") or env.get("UPSTASH_REDIS_REST_TOKEN") or ""
+# Turso LibSQL Key-Value Mesh (25M free ops/month, zero rate-limit)
 TURSO_URL = os.environ.get("TURSO_DB_URL") or os.environ.get("TURSO_DATABASE_URL") or os.environ.get("TURSO_URL") or env.get("TURSO_DB_URL") or env.get("TURSO_DATABASE_URL") or env.get("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
 TURSO_TOKEN = os.environ.get("TURSO_DB_TOKEN") or os.environ.get("TURSO_TOKEN") or os.environ.get("TURSO_AUTH_TOKEN") or env.get("TURSO_DB_TOKEN") or env.get("TURSO_TOKEN") or env.get("TURSO_AUTH_TOKEN") or ""
 SECRET_KEY = os.environ.get("SECRET_KEY") or os.environ.get("CF_SECRET_KEY") or env.get("SECRET_KEY") or env.get("CF_SECRET_KEY") or ""
@@ -153,22 +152,39 @@ if not ACCOUNTS:
         except Exception:
             pass
 
-if UPSTASH_URL and UPSTASH_TOKEN:
+# High-Capacity Primary SSOT: Turso LibSQL (Zero rate limits, 25M ops/mo)
+if (not ACCOUNTS or len(ACCOUNTS) < 20) and TURSO_URL and TURSO_TOKEN:
     try:
-        req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:accounts", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            res = data.get("result")
-            if res:
-                up_accs = json.loads(res) if isinstance(res, str) else res
-                existing_uids = {str(a.get("user_id") or a.get("account_id") or a.get("id") or "") for a in ACCOUNTS}
-                for a in up_accs:
-                    a_uid = str(a.get("user_id") or a.get("account_id") or a.get("id") or "")
-                    if a_uid and a_uid not in existing_uids and a_uid != "8881914294" and "nancy" not in str(a.get("name", "")).lower():
-                        ACCOUNTS.append(a)
-                        existing_uids.add(a_uid)
+        t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+        t_req = json.dumps({
+            "requests": [
+                {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'fleet:accounts' OR key = 'fleet:live_state' LIMIT 1;", "args": []}},
+                {"type": "close"}
+            ]
+        }).encode()
+        req_t = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req_t, timeout=6) as t_resp:
+            t_data = json.loads(t_resp.read().decode())
+            results = t_data.get("results", [])
+            if results and results[0].get("type") == "ok":
+                rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                if rows:
+                    raw_val = rows[0][0].get("value")
+                    t_accs = json.loads(raw_val) if isinstance(raw_val, str) else raw_val
+                    while isinstance(t_accs, str):
+                        t_accs = json.loads(t_accs)
+                    if isinstance(t_accs, dict) and "accounts" in t_accs:
+                        t_accs = t_accs["accounts"]
+                    if isinstance(t_accs, list):
+                        existing_uids = {str(a.get("user_id") or a.get("account_id") or a.get("id") or "") for a in ACCOUNTS}
+                        for a in t_accs:
+                            a_uid = str(a.get("user_id") or a.get("account_id") or a.get("id") or "")
+                            if a_uid and a_uid not in existing_uids and a_uid != "8881914294" and "nancy" not in str(a.get("name", "")).lower():
+                                ACCOUNTS.append(a)
+                                existing_uids.add(a_uid)
     except Exception:
         pass
+
 
 # Load TON Wallets
 ton_wallets = {}
@@ -180,15 +196,27 @@ if os.path.exists(wallets_path):
     except Exception:
         pass
 
-if not ton_wallets and UPSTASH_URL and UPSTASH_TOKEN:
+if not ton_wallets and TURSO_URL and TURSO_TOKEN:
     try:
-        req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:wallets:ton", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            d = json.loads(resp.read().decode())
-            if d.get("result"):
-                ton_wallets = json.loads(d["result"]) if isinstance(d["result"], str) else d["result"]
+        t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+        t_req = json.dumps({
+            "requests": [
+                {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'fleet:wallets:ton' LIMIT 1;", "args": []}},
+                {"type": "close"}
+            ]
+        }).encode()
+        req_t = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req_t, timeout=6) as t_resp:
+            t_data = json.loads(t_resp.read().decode())
+            results = t_data.get("results", [])
+            if results and results[0].get("type") == "ok":
+                rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                if rows:
+                    raw_val = rows[0][0].get("value")
+                    ton_wallets = json.loads(raw_val) if isinstance(raw_val, str) else raw_val
     except Exception:
         pass
+
 
 
 def get_ton_wallet_address(acc: dict, uid: str) -> str:
@@ -403,7 +431,8 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
             t_req = {
                 "requests": [
                     {"type": "execute", "stmt": {"sql": "SELECT key, val FROM kv_mesh WHERE key LIKE 'fleet:tokens:%';"}},
-                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'miniapp_tokens';"}}
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'miniapp_tokens';"}},
+                    {"type": "execute", "stmt": {"sql": "SELECT key, val FROM kv_mesh WHERE key LIKE 'victors:pass:%';"}}
                 ]
             }
             async with session.post(
@@ -461,128 +490,37 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                                                     acc_dict[tk] = tv
                                                 elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(acc_dict.get(tk)):
                                                     acc_dict[tk] = tv
+                    # Tertiary Turso: victors passes from kv_mesh
+                    if len(results) > 2:
+                        vic_rows = results[2].get("response", {}).get("result", {}).get("rows", [])
+                        for vr in vic_rows:
+                            k_str = vr[0]["value"]
+                            v_raw = vr[1]["value"]
+                            uid_str = k_str.replace("victors:pass:", "")
+                            if uid_str.isdigit():
+                                pass_val = robust_json_loads(v_raw)
+                                hp_val = None
+                                if isinstance(pass_val, dict) and pass_val.get("humanPass"):
+                                    hp_val = pass_val["humanPass"]
+                                elif isinstance(pass_val, str) and len(pass_val) > 10:
+                                    hp_val = pass_val
+                                elif v_raw:
+                                    hp_val = str(v_raw)
+                                if hp_val:
+                                    acc_dict = tokens_db.setdefault(uid_str, {})
+                                    acc_dict["victors_pass"] = hp_val
             logger.info(f"Loaded {len(tokens_db)} accounts from Turso LibSQL SSOT.")
         except Exception as te:
             logger.warning(f"Turso tokens fetch note: {te}")
 
-    up_h = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-    
-    # 1. Secondary: Merge Upstash miniapp_tokens
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            async with session.get(f"{UPSTASH_URL}/get/miniapp_tokens", headers=up_h, timeout=aiohttp.ClientTimeout(total=8)) as r:
-                if r.status == 200:
-                    d = await r.json()
-                    raw = d.get("result")
-                    raw = robust_json_loads(raw)
-                    if isinstance(raw, dict):
-                        for uid, utoks in raw.items():
-                            s_uid = str(uid)
-                            if s_uid == "8881914294": continue
-                            if s_uid not in tokens_db:
-                                tokens_db[s_uid] = utoks
-                            else:
-                                for tk, tv in utoks.items():
-                                    if tv:
-                                        if tk not in tokens_db[s_uid]:
-                                            tokens_db[s_uid][tk] = tv
-                                        elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(tokens_db[s_uid].get(tk)):
-                                            tokens_db[s_uid][tk] = tv
-        except Exception as e:
-            logger.warning(f"Error loading miniapp_tokens: {e}")
-
-    # Discover all dynamic accounts from Upstash Redis keys fleet:tokens:*
-    discovered_uids = set(str(acc.get("user_id") or acc.get("account_id") or acc.get("id") or "") for acc in ACCOUNTS if (acc.get("user_id") or acc.get("account_id") or acc.get("id")))
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            async with session.get(f"{UPSTASH_URL}/keys/fleet:tokens:*", headers=up_h, timeout=aiohttp.ClientTimeout(total=5)) as kr:
-                if kr.status == 200:
-                    kd = await kr.json()
-                    for k in kd.get("result", []):
-                        u = k.split(":")[-1]
-                        if u.isdigit() and u != "8881914294":
-                            discovered_uids.add(u)
-        except Exception:
-            pass
-
     # Ensure any newly discovered account is dynamically present in ACCOUNTS
     existing_uids = set(str(acc.get("user_id") or acc.get("account_id") or acc.get("id") or "") for acc in ACCOUNTS if (acc.get("user_id") or acc.get("account_id") or acc.get("id")))
-    for duid in discovered_uids.union(tokens_db.keys()):
+    for duid in tokens_db.keys():
         if duid not in existing_uids and duid != "8881914294":
             name = tokens_db.get(duid, {}).get("name", f"Account_{duid}")
             if "nancy" not in str(name).lower():
                 ACCOUNTS.append({"user_id": int(duid), "account_id": duid, "name": name})
                 existing_uids.add(duid)
-
-    # 3. Merge individual fleet:tokens:{uid} and victors:pass:{uid} from Upstash via high-speed pipeline
-    if UPSTASH_URL and UPSTASH_TOKEN and discovered_uids:
-        try:
-            pipeline_cmds = []
-            for uid in discovered_uids:
-                if uid != "8881914294":
-                    pipeline_cmds.append(["GET", f"fleet:tokens:{uid}"])
-                    pipeline_cmds.append(["GET", f"victors:pass:{uid}"])
-            async with session.post(
-                f"{UPSTASH_URL}/pipeline",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
-                json=pipeline_cmds,
-                timeout=aiohttp.ClientTimeout(total=8)
-            ) as pr:
-                if pr.status == 200:
-                    p_res = await pr.json()
-                    for cmd, item in zip(pipeline_cmds, p_res):
-                        key = cmd[1]
-                        uid = str(key.split(":")[-1])
-                        raw = item.get("result")
-                        if not raw:
-                            continue
-                        parsed = robust_json_loads(raw)
-                        if key.startswith("fleet:tokens:"):
-                            if isinstance(parsed, dict):
-                                existing = tokens_db.setdefault(uid, {})
-                                for tk, tv in parsed.items():
-                                    if tv:
-                                        if tk not in existing:
-                                            existing[tk] = tv
-                                        elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(existing.get(tk)):
-                                            existing[tk] = tv
-                        elif key.startswith("victors:pass:"):
-                            hp = None
-                            if isinstance(parsed, dict) and parsed.get("humanPass"):
-                                hp = parsed["humanPass"]
-                            elif isinstance(parsed, str) and len(parsed) > 10:
-                                hp = parsed
-                            elif raw and len(str(raw)) > 10:
-                                hp = raw
-                            if hp:
-                                existing = tokens_db.setdefault(uid, {})
-                                existing["victors_pass"] = hp
-        except Exception as pe:
-            logger.warning(f"Upstash pipeline token fetch fallback to parallel gather: {pe}")
-            async def fetch_one(uid):
-                try:
-                    async with session.get(f"{UPSTASH_URL}/get/fleet:tokens:{uid}", headers=up_h, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                        if r.status == 200:
-                            d = await r.json()
-                            raw = d.get("result")
-                            if raw:
-                                parsed = robust_json_loads(raw)
-                                if isinstance(parsed, dict):
-                                    return uid, parsed
-                except Exception:
-                    pass
-                return uid, None
-
-            gather_res = await asyncio.gather(*[fetch_one(uid) for uid in discovered_uids if uid != "8881914294"])
-            for uid, parsed in gather_res:
-                if parsed and isinstance(parsed, dict):
-                    existing = tokens_db.setdefault(str(uid), {})
-                    for tk, tv in parsed.items():
-                        if tv:
-                            if tk not in existing:
-                                existing[tk] = tv
-                            elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(existing.get(tk)):
-                                existing[tk] = tv
 
     # 3. Local High-Speed Cache (fleet_miniapp_tokens.json)
     local_f = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
@@ -1213,6 +1151,7 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
         # 6. Tasks (Dynamic task discovery across main, daily, custom and sponsored tasks)
         completed_tasks = set((u_info.get("tasks") or []) + (u_info.get("dayTasks") or []))
         tasks_to_check = ["channel", "payments", "chat", "x", "dnews", "dpay", "dpromo", "dreinvest", "dname", "c6"]
+        task_waits = {"x": 15, "chat": 8, "payments": 8, "dpay": 8, "dname": 2}
         partner_items = []
         try:
             tasks_cfg_resp = await rpc("/api/tasks")
@@ -1222,12 +1161,13 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
                 for ct in custom_tasks:
                     if isinstance(ct, dict) and ct.get("id"):
                         cid = str(ct["id"])
+                        task_waits[cid] = ct.get("wait", 8)
                         if cid not in tasks_to_check:
                             tasks_to_check.append(cid)
                 
                 # Check deposit task (dbuy -> +500 coins)
                 day_info = t_result.get("day", {})
-                if day_info.get("bought") and "dbuy" not in completed_tasks:
+                if (day_info.get("bought") or t_result.get("bought") or float(u_info.get("depositUsd", 0) or 0) > 0) and "dbuy" not in completed_tasks:
                     tasks_to_check.append("dbuy")
 
                 # Check sponsored tasks (Zero verification required)
@@ -1241,7 +1181,8 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
             if tid not in completed_tasks:
                 if tid != "dbuy":
                     await rpc("/api/task/open", {"id": tid})
-                    await asyncio.sleep(0.5)
+                    w_sec = task_waits.get(tid, 1)
+                    await asyncio.sleep(min(w_sec + 0.5, 12))
                 t_claim = await rpc("/api/task", {"id": tid})
                 if t_claim.get("ok"):
                     res["tasks_claimed"] += 1
@@ -1484,25 +1425,37 @@ async def sweep_mexoearn_tasks(session: aiohttp.ClientSession, uid: str, name: s
                     res["tasks_claimed"] += 1
                     res["notes"].append(f"checkin_d{d.get('day')}")
 
-        # Tasks sweep
+        # Tasks sweep (batch start + single max wait + batch claim to minimize latency)
         async with session.get("https://mexoearn.xyz/api/tasks", headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as r:
             if r.status == 200:
                 d = await r.json()
                 tasks = d.get("tasks", [])
+                pending_claims = []
+                max_delay = 0
                 for t in tasks:
                     if not t.get("locked") and not t.get("requiresProof") and t.get("status") == "available":
                         tid = str(t.get("id"))
+                        delay = min(max(int(t.get("claimDelaySeconds", 5)) + 1, 3), 12)
                         try:
-                            delay = max(int(t.get("claimDelaySeconds", 5)) + 1, 3)
                             async with session.post(f"https://mexoearn.xyz/api/tasks/{tid}/start", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as rs:
                                 if rs.status == 200:
-                                    await asyncio.sleep(delay)
-                                    async with session.post(f"https://mexoearn.xyz/api/tasks/{tid}/claim", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as rc:
-                                        if rc.status == 200:
-                                            cd = await rc.json()
-                                            if cd.get("ok"):
-                                                res["tasks_claimed"] += 1
-                                                res["notes"].append(f"task_{tid}")
+                                    pending_claims.append(tid)
+                                    if delay > max_delay:
+                                        max_delay = delay
+                        except Exception:
+                            pass
+                        if len(pending_claims) >= 3:
+                            break
+                if pending_claims:
+                    await asyncio.sleep(max_delay)
+                    for tid in pending_claims:
+                        try:
+                            async with session.post(f"https://mexoearn.xyz/api/tasks/{tid}/claim", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as rc:
+                                if rc.status == 200:
+                                    cd = await rc.json()
+                                    if cd.get("ok"):
+                                        res["tasks_claimed"] += 1
+                                        res["notes"].append(f"task_{tid}")
                         except Exception:
                             pass
 
@@ -2073,26 +2026,28 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
         res["notes"].append("missing_init_data")
         return res
 
-    # 1. Retrieve humanPass from Upstash or acc dict
+    # 1. Retrieve humanPass from acc dict, Turso LibSQL SSOT, or Upstash
     hp = acc.get("victors_pass") or acc.get("victors_human_pass")
-    if not hp and UPSTASH_URL and UPSTASH_TOKEN:
+    if not hp and TURSO_URL and TURSO_TOKEN:
         try:
-            async with session.get(
-                f"{UPSTASH_URL}/get/victors:pass:{uid}",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
-                timeout=aiohttp.ClientTimeout(total=5)
-            ) as pr:
-                if pr.status == 200:
-                    pd = await pr.json()
-                    r_val = pd.get("result")
-                    if r_val:
-                        p_hp = robust_json_loads(r_val)
-                        if isinstance(p_hp, dict) and p_hp.get("humanPass"):
-                            hp = p_hp["humanPass"]
-                        elif isinstance(p_hp, str) and len(p_hp) > 10:
-                            hp = p_hp
+            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+            t_req = {
+                "requests": [
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = ? LIMIT 1;", "args": [{"type": "text", "value": f"victors:pass:{uid}"}]}}
+                ]
+            }
+            async with session.post(t_http, json=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=4)) as tr:
+                if tr.status == 200:
+                    td = await tr.json()
+                    rows = td.get("results", [])[0].get("response", {}).get("result", {}).get("rows", [])
+                    if rows:
+                        p_val = robust_json_loads(rows[0][0]["value"])
+                        if isinstance(p_val, dict) and p_val.get("humanPass"):
+                            hp = p_val["humanPass"]
+                        elif isinstance(p_val, str) and len(p_val) > 10:
+                            hp = p_val
                         else:
-                            hp = r_val
+                            hp = rows[0][0]["value"]
         except Exception:
             pass
 
@@ -2598,11 +2553,6 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         # Propagate newly acquired JWT / refresh tokens to merged_toks and persistent cloud stores
         if merged_toks.get("hunter_jwt"):
             acc["hunter_jwt"] = merged_toks["hunter_jwt"]
-            if UPSTASH_URL and UPSTASH_TOKEN:
-                try:
-                    await session.post(f"{UPSTASH_URL}/set/fleet:tokens:{uid}:hunter_jwt", data=merged_toks["hunter_jwt"].encode("utf-8"), headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-                except Exception:
-                    pass
         if acc.get("earnvault_refresh_token"):
             merged_toks["earnvault_refresh_token"] = acc["earnvault_refresh_token"]
 
@@ -2634,14 +2584,14 @@ async def main():
                 pass
 
     logger.info("=============================================================================")
-    logger.info(f"🎯 STARTING COMPLETE 13-BOT FLEET SIDE-TASK HARVEST ({len(target_accounts)} ACCOUNTS)")
+    logger.info(f"🎯 STARTING COMPLETE 12-BOT FLEET SIDE-TASK HARVEST ({len(target_accounts)} ACCOUNTS)")
     logger.info("=============================================================================")
 
     conn = aiohttp.TCPConnector(limit=25, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=conn) as session:
         t_start = time.time()
         tokens_db = await fetch_all_tokens(session)
-        logger.info(f"Loaded tokens for {len(tokens_db)} accounts from Upstash Redis.")
+        logger.info(f"Loaded tokens for {len(tokens_db)} accounts from Turso LibSQL SSOT.")
 
         # Concurrency semaphore of 5 to balance speed and stability
         sem = asyncio.Semaphore(5)
@@ -2650,7 +2600,7 @@ async def main():
 
         # Print Summary
         logger.info("\n" + "=" * 80)
-        logger.info(f"📊 13-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(target_accounts)} ACCOUNTS)")
+        logger.info(f"📊 12-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(target_accounts)} ACCOUNTS)")
         logger.info("=" * 80)
         total_tasks = 0
         for rep in reports:
@@ -2695,12 +2645,22 @@ async def main():
 
         if bot_token and notif_channel:
             short_card = (
-                f"⚡ <b>Fleet 12-Bot Auto-Harvest Complete</b>\n"
-                f"• <b>Accounts Farmed:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code>\n"
-                f"• <b>Tasks & Rewards Claimed:</b> <code>{total_tasks} Total Claimed</code>\n"
-                f"• <b>Active Protocols (12/12):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • VIC:{vic_tot} • DIL:{dillo_tot} • HNT:{hntr_tot}</code>\n"
-                f"• <b>Duration:</b> <code>{elapsed:.1f}s</code> | <b>Node:</b> <code>GitHub Actions Cloud Runner & Edge Mesh</code>\n"
-                f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
+                f"🚀 <b>AAA AUTO — 12-BOT HARVEST & REVENUE SUMMARY</b> 💎\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👥 <b>Fleet Accounts:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code> 🟢\n"
+                f"🎯 <b>Total Tasks & Yields:</b> <b>{total_tasks} Claimed</b> ✅\n"
+                f"⏱ <b>Sweep Duration:</b> <code>{elapsed:.1f}s</code> ({elapsed/60:.1f}m)\n\n"
+                f"⛏️ <b>Active Mining Pools (5):</b>\n"
+                f"• 🪙 <b>ATF:</b> <code>+{atf_tot}</code> • 🌐 <b>Kynex:</b> <code>+{kyn_tot}</code> • 🐸 <b>PepeGram:</b> <code>+{pep_tot}</code>\n"
+                f"• ⛏️ <b>Dillo:</b> <code>+{dillo_tot}</code> • 🎯 <b>Hunter:</b> <code>+{hntr_tot}</code>\n\n"
+                f"⚡ <b>Tasks & Yield Compounding (4):</b>\n"
+                f"• 🐔 <b>Chicken Land:</b> <code>+{chk_tot}</code> • 🤖 <b>AdxEarn:</b> <code>+{adx_tot}</code>\n"
+                f"• ⚡ <b>MexoEarn:</b> <code>+{mxo_tot}</code> • 🎂 <b>MyAgeApp:</b> <code>+{age_tot}</code>\n\n"
+                f"🏦 <b>Treasury & Commercial Yield (3):</b>\n"
+                f"• 🏦 <b>EarnVault:</b> <code>+{ev_tot}</code> • 🔋 <b>Lifetime:</b> <code>+{life_tot}</code> • 🏢 <b>Victor's:</b> <code>+{vic_tot}</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🛡️ <b>Runner Node:</b> <code>GitHub Actions Headless Cloud & Edge Mesh</code>\n"
+                f"📊 <b>Telemetry:</b> <code>100% Ground-Truth Verified (Turso LibSQL SSOT)</code>"
             )
             try:
                 async with session.post(

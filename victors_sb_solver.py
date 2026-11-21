@@ -27,33 +27,12 @@ logger = logging.getLogger("victors_sb_solver")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
+from turso_mesh import turso_get, turso_set, turso_delete, turso_keys, turso_execute
+
 TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
 TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or ""
 ALERT_BOT_TOKEN = os.getenv("ALERT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN") or os.getenv("REPORT_BOT_TOKEN") or ""
 OWNER_ID = os.getenv("OWNER_ID") or "6727787768"
-
-if not UPSTASH_TOKEN or "internal-dodo" in UPSTASH_URL:
-    env_file = os.path.join(BASE_DIR, ".env")
-    if os.path.exists(env_file):
-        try:
-            with open(env_file, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if "=" in line:
-                        k, v = line.strip().split("=", 1)
-                        if "UPSTASH" in k:
-                            if "URL" in k and not os.getenv("UPSTASH_URL"):
-                                UPSTASH_URL = v.strip("\"' ")
-                            if "TOKEN" in k and not UPSTASH_TOKEN:
-                                UPSTASH_TOKEN = v.strip("\"' ")
-                        if "TURSO" in k:
-                            if "URL" in k and not os.getenv("TURSO_DB_URL"):
-                                TURSO_URL = v.strip("\"' ")
-                            if "TOKEN" in k and not TURSO_TOKEN:
-                                TURSO_TOKEN = v.strip("\"' ")
-        except Exception:
-            pass
 
 VICTORS_SITEKEY = "0x4AAAAAAFD0KRgPRFVwDvgn"
 VICTORS_ORIGIN = "https://app.victors.company"
@@ -76,21 +55,15 @@ def load_all_fleet_uids() -> list:
         except Exception:
             pass
 
-    # 2. Dynamic discovery from Upstash Redis fleet:tokens:*
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            req = urllib.request.Request(
-                f"{UPSTASH_URL}/keys/fleet:tokens:*",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-            )
-            with urllib.request.urlopen(req, timeout=5) as r:
-                d = json.loads(r.read().decode())
-                keys = d.get("result", [])
-                uids = sorted(list(set(int(k.split(":")[-1]) for k in keys if k.split(":")[-1].isdigit())))
-                if uids:
-                    return uids
-        except Exception:
-            pass
+    # 2. Dynamic discovery from Turso LibSQL kv_mesh
+    try:
+        keys = turso_keys("fleet:tokens:%")
+        if keys:
+            uids = sorted(list(set(int(k.split(":")[-1]) for k in keys if k.split(":")[-1].isdigit())))
+            if uids:
+                return uids
+    except Exception:
+        pass
 
     # 3. Fallback roster
     return [
@@ -177,21 +150,13 @@ def load_fleet_ton_wallets() -> dict:
         except Exception:
             pass
 
-    # 2. Secondary: Upstash Redis
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            req = urllib.request.Request(
-                f"{UPSTASH_URL}/get/fleet:wallets:ton",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode())
-                res = data.get("result")
-                if res:
-                    d = robust_json_loads(res)
-                    return d if isinstance(d, dict) else {}
-        except Exception as e:
-            logger.warning(f"Error fetching TON wallets from Upstash Redis: {e}")
+    # 2. Secondary: Turso LibSQL SSOT
+    try:
+        w = turso_get("fleet:wallets:ton")
+        if isinstance(w, dict) and w:
+            return w
+    except Exception:
+        pass
     return {}
 
 
@@ -231,21 +196,6 @@ def load_all_miniapp_tokens() -> dict:
         except Exception as e_t:
             logger.debug(f"Turso miniapp_tokens fetch note: {e_t}")
 
-    # 2. Secondary: Upstash Redis
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            req = urllib.request.Request(
-                f"{UPSTASH_URL}/get/miniapp_tokens",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode())
-                res = data.get("result")
-                if res:
-                    d = robust_json_loads(res)
-                    return d if isinstance(d, dict) else {}
-        except Exception:
-            pass
     return {}
 
 
@@ -283,22 +233,6 @@ def get_token_from_upstash(uid: int) -> dict:
         except Exception as te:
             logger.debug(f"Turso token fetch note for UID {uid}: {te}")
 
-    # 2. Secondary: Upstash Redis
-    if not (UPSTASH_URL and UPSTASH_TOKEN):
-        return {}
-    try:
-        req = urllib.request.Request(
-            f"{UPSTASH_URL}/get/fleet:tokens:{uid}",
-            headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode())
-            res = data.get("result")
-            if res:
-                d = robust_json_loads(res)
-                return d if isinstance(d, dict) else {}
-    except Exception as e:
-        logger.warning(f"Upstash token fetch warning for UID {uid}: {e}")
     return {}
 
 
@@ -340,25 +274,6 @@ def get_victors_pass_from_upstash(uid: int) -> str:
         except Exception:
             pass
 
-    # 2. Secondary: Upstash Redis
-    if not (UPSTASH_URL and UPSTASH_TOKEN):
-        return None
-    try:
-        req = urllib.request.Request(
-            f"{UPSTASH_URL}/get/victors:pass:{uid}",
-            headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            res = data.get("result")
-            if res:
-                d = robust_json_loads(res)
-                if isinstance(d, dict):
-                    return d.get("humanPass")
-                elif isinstance(d, str):
-                    return d
-    except Exception:
-        pass
     return None
 
 
@@ -380,33 +295,24 @@ def mark_victors_referral_bound(uid: int):
         except Exception:
             pass
 
-    if not (UPSTASH_URL and UPSTASH_TOKEN):
-        return
-    try:
-        req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:accounts", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode())
-            res = data.get("result")
-            if res:
-                accounts = json.loads(res) if isinstance(res, str) else res
-                modified = False
-                for a in accounts:
-                    if str(a.get("user_id") or a.get("account_id")) == str(uid):
-                        a["victors_referral_bound"] = True
-                        a["vic_referral_bound"] = True
-                        modified = True
-                        break
-                if modified:
-                    set_req = urllib.request.Request(
-                        f"{UPSTASH_URL}/set/fleet:accounts",
-                        data=json.dumps(accounts).encode(),
-                        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
-                        method="POST"
-                    )
-                    with urllib.request.urlopen(set_req, timeout=6):
-                        pass
-    except Exception as e:
-        logger.warning(f"Error marking victors_referral_bound for {uid}: {e}")
+    # Update local accounts.json if present
+    acc_path = os.path.join(BASE_DIR, "accounts.json")
+    if os.path.exists(acc_path):
+        try:
+            with open(acc_path, "r", encoding="utf-8") as f:
+                accounts = json.load(f)
+            modified = False
+            for a in accounts:
+                if str(a.get("user_id") or a.get("account_id")) == str(uid):
+                    a["victors_referral_bound"] = True
+                    a["vic_referral_bound"] = True
+                    modified = True
+                    break
+            if modified:
+                with open(acc_path, "w", encoding="utf-8") as f:
+                    json.dump(accounts, f, indent=2)
+        except Exception:
+            pass
 
 
 def save_victors_pass_to_upstash(uid: int, human_pass: str):
@@ -444,26 +350,6 @@ def save_victors_pass_to_upstash(uid: int, human_pass: str):
             logger.info(f"✅ Saved Victor's pass for {uid} to Turso LibSQL SSOT.")
         except Exception as te:
             logger.warning(f"Note saving Victor's pass to Turso: {te}")
-
-    # 2. Secondary: Upstash Redis with 24-hour TTL
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            req = urllib.request.Request(
-                f"{UPSTASH_URL}/set/victors:pass:{uid}",
-                data=val.encode(),
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=10):
-                pass
-            req_ttl = urllib.request.Request(
-                f"{UPSTASH_URL}/expire/victors:pass:{uid}/86400",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-            )
-            with urllib.request.urlopen(req_ttl, timeout=5):
-                pass
-        except Exception as e:
-            logger.warning(f"Error saving Victor's pass to Redis: {e}")
 
     mark_victors_referral_bound(uid)
 
@@ -667,22 +553,14 @@ def fetch_fresh_victors_token_mtproto(uid: int, is_master: bool) -> str:
         loop.close()
         if fresh_token:
             logger.info(f"✨ UID {uid}: Successfully extracted fresh Victor's Company token via MTProto!")
-            # Save to Upstash Redis
-            if UPSTASH_URL and UPSTASH_TOKEN:
-                try:
-                    tok_dict = get_token_from_upstash(uid) or {}
-                    tok_dict["victors_init_data"] = fresh_token
-                    tok_dict["victors_updated_at"] = time.time()
-                    set_req = urllib.request.Request(
-                        f"{UPSTASH_URL}/set/fleet:tokens:{uid}",
-                        data=json.dumps(tok_dict).encode(),
-                        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
-                        method="POST"
-                    )
-                    with urllib.request.urlopen(set_req, timeout=6):
-                        pass
-                except Exception as ue:
-                    logger.debug(f"UID {uid}: Redis token save note: {ue}")
+            # Save to Turso LibSQL SSOT
+            try:
+                tok_dict = turso_get(f"fleet:tokens:{uid}") or {}
+                tok_dict["victors_init_data"] = fresh_token
+                tok_dict["victors_updated_at"] = time.time()
+                turso_set(f"fleet:tokens:{uid}", tok_dict)
+            except Exception as ue:
+                logger.debug(f"UID {uid}: Turso token save note: {ue}")
             return fresh_token
     except Exception as e:
         logger.warning(f"UID {uid}: Extraction loop error: {e}")

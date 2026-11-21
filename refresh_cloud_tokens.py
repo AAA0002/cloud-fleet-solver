@@ -37,12 +37,12 @@ except ImportError:
 API_ID = int(os.getenv("TELEGRAM_API_ID") or os.getenv("API_ID", "37321306"))
 API_HASH = os.getenv("TELEGRAM_API_HASH") or os.getenv("API_HASH", "5cd9e5bbfb572a4429a0c54774153b47")
 REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID", "6727787768"))
+from turso_mesh import turso_get, turso_set, turso_delete
+
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_NOTIFICATION_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
 CF_SECRET_KEY = os.getenv("CF_SECRET_KEY") or os.getenv("SECRET_KEY", "")
 
-UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
 TURSO_URL = os.getenv("TURSO_URL") or os.getenv("TURSO_DB_URL", "")
 TURSO_TOKEN = os.getenv("TURSO_TOKEN") or os.getenv("TURSO_DB_TOKEN", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -221,20 +221,13 @@ def load_accounts():
             print(f"⚠️ Cloudflare backup.zip load note ({cf_url}): {e}")
             continue
 
-    # Fallback to Upstash Redis fleet:accounts
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            req = urllib.request.Request(
-                f"{UPSTASH_URL}/get/fleet:accounts",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                d = json.loads(resp.read().decode())
-                r = robust_json_loads(d.get("result"))
-                if isinstance(r, list) and r:
-                    return r
-        except Exception as e:
-            print(f"Upstash fleet:accounts fetch warning: {e}")
+    # Fallback to Turso LibSQL fleet:accounts
+    try:
+        r = turso_get("fleet:accounts")
+        if isinstance(r, list) and r:
+            return r
+    except Exception as e:
+        print(f"Turso fleet:accounts fetch warning: {e}")
 
     raw_env = os.getenv("FLEET_ACCOUNTS_JSON")
     if raw_env:
@@ -247,32 +240,16 @@ def load_accounts():
 
 
 async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: str, name: str, tokens: dict):
-    """Pushes extracted tokens to Turso LibSQL (Primary SSOT), Supabase, 5x Cloudflare Edge Workers, and Upstash Redis."""
-    # 0. Fetch existing tokens from Turso LibSQL first (Primary SSOT), fallback to Upstash
+    """Pushes extracted tokens to Turso LibSQL (Primary SSOT), Supabase, and 5x Cloudflare Edge Workers."""
+    # 0. Fetch existing tokens from Turso LibSQL first (Primary SSOT)
     existing_tokens = {}
     if TURSO_URL and TURSO_TOKEN:
         try:
-            raw_t = turso_get_sync(f"fleet:tokens:{uid}")
+            raw_t = turso_get(f"fleet:tokens:{uid}")
             if raw_t:
-                existing_tokens = robust_json_loads(raw_t)
+                existing_tokens = robust_json_loads(raw_t) if isinstance(raw_t, str) else raw_t
         except Exception:
             pass
-
-    if not existing_tokens and UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            async with session.get(
-                f"{UPSTASH_URL}/get/fleet:tokens:{uid}",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
-                timeout=aiohttp.ClientTimeout(total=4)
-            ) as er:
-                if er.status == 200:
-                    ed = await er.json()
-                    res_raw = ed.get("result")
-                    if res_raw:
-                        existing_tokens = robust_json_loads(res_raw)
-        except Exception:
-            pass
-
     if not isinstance(existing_tokens, dict):
         existing_tokens = {}
 
@@ -299,30 +276,15 @@ async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: s
                     }
                 }
             ]
-            if tokens.get("chickenland_init_data"):
-                t_reqs.append({
-                    "type": "execute",
-                    "stmt": {
-                        "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, unixepoch())",
-                        "args": [{"type": "text", "value": f"fleet:tokens:{uid}:chickenland_init_data"}, {"type": "text", "value": tokens["chickenland_init_data"]}]
-                    }
-                })
-            if tokens.get("myage_init_data"):
-                t_reqs.append({
-                    "type": "execute",
-                    "stmt": {
-                        "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, unixepoch())",
-                        "args": [{"type": "text", "value": f"fleet:tokens:{uid}:myage_init_data"}, {"type": "text", "value": tokens["myage_init_data"]}]
-                    }
-                })
-            if tokens.get("hunter_init_data"):
-                t_reqs.append({
-                    "type": "execute",
-                    "stmt": {
-                        "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, unixepoch())",
-                        "args": [{"type": "text", "value": f"fleet:tokens:{uid}:hunter_init_data"}, {"type": "text", "value": tokens["hunter_init_data"]}]
-                    }
-                })
+            for tk, tv in tokens.items():
+                if tv and isinstance(tv, str) and len(tv) > 10:
+                    t_reqs.append({
+                        "type": "execute",
+                        "stmt": {
+                            "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, unixepoch())",
+                            "args": [{"type": "text", "value": f"fleet:tokens:{uid}:{tk}"}, {"type": "text", "value": tv}]
+                        }
+                    })
 
             # Also update monolithic miniapp_tokens in Turso
             raw_all_t = turso_get_sync("miniapp_tokens")
@@ -385,54 +347,6 @@ async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: s
                     break
         except Exception as e:
             print(f"  ⚠️ Sync note for {cf_url}: {e}")
-
-    # 4. Upstash Redis REST (Best-effort secondary mirror)
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            async with session.post(
-                f"{UPSTASH_URL}/set/fleet:tokens:{uid}",
-                data=json.dumps(payload),
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=4)
-            ) as up_resp:
-                if up_resp.status in (200, 201):
-                    print(f"  ✅ Synced to Upstash Redis (fleet:tokens:{uid})")
-
-            # Also sync into monolithic miniapp_tokens dictionary
-            try:
-                async with session.get(
-                    f"{UPSTASH_URL}/get/miniapp_tokens",
-                    headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
-                    timeout=aiohttp.ClientTimeout(total=3)
-                ) as r_all:
-                    if r_all.status == 200:
-                        all_d = await r_all.json()
-                        raw_all = all_d.get("result")
-                        master_dict = robust_json_loads(raw_all)
-                        if not isinstance(master_dict, dict):
-                            master_dict = {}
-                        master_dict[str(uid)] = payload
-                        await session.post(
-                            f"{UPSTASH_URL}/set/miniapp_tokens",
-                            data=json.dumps(master_dict),
-                            headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
-                            timeout=aiohttp.ClientTimeout(total=4)
-                        )
-            except Exception:
-                pass
-
-            if tokens.get("chickenland_init_data"):
-                try:
-                    await session.post(
-                        f"{UPSTASH_URL}/set/fleet:tokens:{uid}:chickenland_init_data",
-                        data=tokens["chickenland_init_data"],
-                        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
-                        timeout=aiohttp.ClientTimeout(total=2)
-                    )
-                except Exception:
-                    pass
-        except Exception as ue:
-            pass
 
     # 3. Local High-Performance JSON Cache
     tok_file = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
@@ -623,32 +537,7 @@ async def sync_session_health(session: aiohttp.ClientSession, acc: dict, is_heal
     phone = acc.get("phone") or "N/A"
     now_ts = int(time.time())
 
-    # 1. Upstash Redis
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        up_h = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-        try:
-            if is_healthy:
-                await session.post(f"{UPSTASH_URL}/sadd/fleet:healthy_sessions/{idx_str}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                if uid:
-                    await session.post(f"{UPSTASH_URL}/sadd/fleet:healthy_sessions/{uid}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                await session.post(f"{UPSTASH_URL}/srem/fleet:revoked_sessions/{idx_str}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                if uid:
-                    await session.post(f"{UPSTASH_URL}/srem/fleet:revoked_sessions/{uid}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                await session.post(f"{UPSTASH_URL}/del/fleet:revocation_reason:{idx_str}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                await session.post(f"{UPSTASH_URL}/del/fleet:alert_debounce:revocation:{idx_str}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-            else:
-                await session.post(f"{UPSTASH_URL}/sadd/fleet:revoked_sessions/{idx_str}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                if uid:
-                    await session.post(f"{UPSTASH_URL}/sadd/fleet:revoked_sessions/{uid}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                await session.post(f"{UPSTASH_URL}/srem/fleet:healthy_sessions/{idx_str}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                if uid:
-                    await session.post(f"{UPSTASH_URL}/srem/fleet:healthy_sessions/{uid}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                if reason:
-                    await session.post(f"{UPSTASH_URL}/set/fleet:revocation_reason:{idx_str}?ex=86400", data=reason, headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-        except Exception as e_up:
-            print(f"[{name}] Upstash health sync note: {e_up}")
-
-    # 2. Turso LibSQL Mesh
+    # 1. Turso LibSQL Mesh
     if TURSO_URL and TURSO_TOKEN:
         try:
             http_url = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
@@ -664,26 +553,20 @@ async def sync_session_health(session: aiohttp.ClientSession, acc: dict, is_heal
         except Exception:
             pass
 
-    # 3. Proactive Telegram Alert (with 6h debounce)
+    # 2. Proactive Telegram Alert (with 6h debounce via Turso)
     if not is_healthy and REPORT_BOT_TOKEN:
         debounced = False
-        if UPSTASH_URL and UPSTASH_TOKEN:
-            try:
-                up_h = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-                async with session.get(f"{UPSTASH_URL}/get/fleet:alert_debounce:revocation:{idx_str}", headers=up_h, timeout=aiohttp.ClientTimeout(total=2)) as r_deb:
-                    if r_deb.status == 200:
-                        j_deb = await r_deb.json()
-                        if j_deb.get("result"):
-                            debounced = True
-            except Exception:
-                pass
+        try:
+            if turso_get(f"fleet:alert_debounce:revocation:{idx_str}"):
+                debounced = True
+        except Exception:
+            pass
 
         if not debounced:
-            if UPSTASH_URL and UPSTASH_TOKEN:
-                try:
-                    await session.post(f"{UPSTASH_URL}/set/fleet:alert_debounce:revocation:{idx_str}?ex=21600", data="1", headers=up_h, timeout=aiohttp.ClientTimeout(total=2))
-                except Exception:
-                    pass
+            try:
+                turso_set(f"fleet:alert_debounce:revocation:{idx_str}", "1", ttl=21600)
+            except Exception:
+                pass
             alert_text = (
                 f"🚨 <b>[AAA Fleet Sentinel] Session Revocation Notice</b> 🔴\n\n"
                 f"• <b>Account:</b> #{idx} ({name})\n"

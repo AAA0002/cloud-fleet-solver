@@ -54,12 +54,7 @@ RAW_CHANNEL_ID = 4433995185
 CHANNEL_URL = "https://t.me/s/ChickenLandCodes"
 RPC_URL = "https://app8968434282.tgcloud.ai/api/rpc"
 
-# Upstash Redis: Dual-cluster support with automatic fallback
-UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
-UPSTASH_STANDBY_URL = os.getenv("UPSTASH_STANDBY_URL") or "https://rich-emu-106119.upstash.io"
-UPSTASH_STANDBY_TOKEN = os.getenv("UPSTASH_STANDBY_TOKEN") or ""
-
+# Turso LibSQL Key-Value Mesh (table: kv_mesh, 25M free ops/month, zero rate-limit)
 TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
 TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_TOKEN") or os.getenv("TURSO_AUTH_TOKEN") or ""
 
@@ -171,59 +166,109 @@ async def async_turso_set(session: aiohttp.ClientSession, key: str, val: Any) ->
     return res is not None
 
 def redis_command(cmd: str, *args) -> Any:
-    """Synchronous Redis helper for initial startup loading with dual-cluster failover."""
-    endpoints = []
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        endpoints.append((UPSTASH_URL, UPSTASH_TOKEN))
-    if UPSTASH_STANDBY_URL and UPSTASH_STANDBY_TOKEN and (UPSTASH_STANDBY_URL != UPSTASH_URL):
-        endpoints.append((UPSTASH_STANDBY_URL, UPSTASH_STANDBY_TOKEN))
-
-    for u_url, u_tok in endpoints:
-        headers = {"Authorization": f"Bearer {u_tok}", "Content-Type": "application/json"}
-        try:
-            req = urllib.request.Request(u_url, data=json.dumps([cmd, *args]).encode('utf-8'), headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=4) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                if "error" not in data:
-                    return data.get("result")
-        except Exception:
+    """High-performance KV helper backed by Turso LibSQL (zero Upstash rate limits)."""
+    cmd = cmd.upper()
+    if cmd == "GET":
+        key = args[0]
+        return turso_get(key)
+    elif cmd == "SET":
+        key, val = args[0], args[1]
+        return "OK" if turso_set(key, val) else None
+    elif cmd == "DEL":
+        key = args[0]
+        rows = turso_execute("DELETE FROM kv_mesh WHERE key = ?", [key])
+        return 1 if rows is not None else 0
+    elif cmd == "SADD":
+        key, val = args[0], str(args[1])
+        cur = turso_get(key)
+        items = []
+        if isinstance(cur, str):
             try:
-                url = f"{u_url.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
-                req_get = urllib.request.Request(url, headers={"Authorization": f"Bearer {u_tok}"})
-                with urllib.request.urlopen(req_get, timeout=4) as resp:
-                    data = json.loads(resp.read().decode('utf-8'))
-                    if "error" not in data:
-                        return data.get("result")
+                items = json.loads(cur)
             except Exception:
-                pass
+                items = [cur]
+        elif isinstance(cur, list):
+            items = cur
+        if val not in items:
+            items.append(val)
+            turso_set(key, json.dumps(items))
+        return 1
+    elif cmd == "SISMEMBER":
+        key, val = args[0], str(args[1])
+        cur = turso_get(key)
+        items = []
+        if isinstance(cur, str):
+            try:
+                items = json.loads(cur)
+            except Exception:
+                items = [cur]
+        elif isinstance(cur, list):
+            items = cur
+        return 1 if val in items else 0
+    elif cmd == "SMEMBERS":
+        key = args[0]
+        cur = turso_get(key)
+        if isinstance(cur, str):
+            try:
+                return json.loads(cur)
+            except Exception:
+                return [cur]
+        elif isinstance(cur, list):
+            return cur
+        return []
     return None
 
 async def async_redis_command(session: aiohttp.ClientSession, cmd: str, *args) -> Any:
-    """Non-blocking async Redis helper for post-burst persistence with dual-cluster failover."""
-    endpoints = []
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        endpoints.append((UPSTASH_URL, UPSTASH_TOKEN))
-    if UPSTASH_STANDBY_URL and UPSTASH_STANDBY_TOKEN and (UPSTASH_STANDBY_URL != UPSTASH_URL):
-        endpoints.append((UPSTASH_STANDBY_URL, UPSTASH_STANDBY_TOKEN))
-
-    for u_url, u_tok in endpoints:
-        headers = {"Authorization": f"Bearer {u_tok}", "Content-Type": "application/json"}
-        try:
-            async with session.post(u_url, json=[cmd, *args], headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if "error" not in data:
-                        return data.get("result")
-        except Exception:
+    """Non-blocking async KV helper backed by Turso LibSQL Hrana pipeline."""
+    cmd = cmd.upper()
+    if cmd == "GET":
+        key = args[0]
+        return await async_turso_get(session, key)
+    elif cmd == "SET":
+        key, val = args[0], args[1]
+        return "OK" if await async_turso_set(session, key, val) else None
+    elif cmd == "DEL":
+        key = args[0]
+        res = await async_turso_execute(session, "DELETE FROM kv_mesh WHERE key = ?", [key])
+        return 1 if res is not None else 0
+    elif cmd == "SADD":
+        key, val = args[0], str(args[1])
+        cur = await async_turso_get(session, key)
+        items = []
+        if isinstance(cur, str):
             try:
-                url = f"{u_url.rstrip('/')}/{cmd}/" + "/".join(urllib.parse.quote(str(a), safe='') for a in args)
-                async with session.get(url, headers={"Authorization": f"Bearer {u_tok}"}, timeout=aiohttp.ClientTimeout(total=3)) as resp2:
-                    if resp2.status == 200:
-                        data2 = await resp2.json()
-                        if "error" not in data2:
-                            return data2.get("result")
+                items = json.loads(cur)
             except Exception:
-                pass
+                items = [cur]
+        elif isinstance(cur, list):
+            items = cur
+        if val not in items:
+            items.append(val)
+            await async_turso_set(session, key, json.dumps(items))
+        return 1
+    elif cmd == "SISMEMBER":
+        key, val = args[0], str(args[1])
+        cur = await async_turso_get(session, key)
+        items = []
+        if isinstance(cur, str):
+            try:
+                items = json.loads(cur)
+            except Exception:
+                items = [cur]
+        elif isinstance(cur, list):
+            items = cur
+        return 1 if val in items else 0
+    elif cmd == "SMEMBERS":
+        key = args[0]
+        cur = await async_turso_get(session, key)
+        if isinstance(cur, str):
+            try:
+                return json.loads(cur)
+            except Exception:
+                return [cur]
+        elif isinstance(cur, list):
+            return cur
+        return []
     return None
 
 def is_code_seen(code: str) -> bool:
@@ -523,7 +568,7 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
-    if not accounts_list and UPSTASH_URL and UPSTASH_TOKEN:
+    if not accounts_list:
         try:
             raw_accs = redis_command("GET", "fleet:accounts")
             if raw_accs:
@@ -606,8 +651,8 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
-    # 1. Upstash Redis monolithic miniapp_tokens (Secondary cache)
-    if UPSTASH_URL and UPSTASH_TOKEN and len(fleet) < 23:
+    # 1. Monolithic miniapp_tokens (Turso kv_mesh)
+    if len(fleet) < 23:
         try:
             res = redis_command("GET", "miniapp_tokens")
             if res:
@@ -627,13 +672,13 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
-    # 2. Check individual keys in Redis
+    # 2. Check individual keys in Turso kv_mesh
     if accounts_list:
         for acc in accounts_list:
             uid = str(acc.get("user_id", ""))
             if uid == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
                 continue
-            if uid and UPSTASH_URL and UPSTASH_TOKEN and (uid not in fleet or not fleet[uid].get("pepegram_init_data")):
+            if uid and (uid not in fleet or not fleet[uid].get("pepegram_init_data")):
                 try:
                     res = redis_command("GET", f"fleet:tokens:{uid}")
                     if res:
@@ -1385,8 +1430,8 @@ async def start_mtproto_listener():
         except Exception:
             pass
 
-    # Cloud Fallback 2: Load directly from Upstash Redis fleet:accounts if local file missing
-    if not accounts and UPSTASH_URL and UPSTASH_TOKEN:
+    # Cloud Fallback 2: Load directly from Turso LibSQL fleet:accounts if local file missing
+    if not accounts:
         try:
             res_r = redis_command("GET", "fleet:accounts")
             if res_r:
@@ -1621,22 +1666,21 @@ def is_sniper_already_running(threshold_seconds: float = 45.0) -> bool:
     except Exception:
         pass
 
-    # 1. Upstash Redis fallback
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            hb = redis_command("GET", "fleet:chickenland_sniper:heartbeat")
-            if hb:
-                data = json.loads(hb) if isinstance(hb, str) else hb
-                if data.get("status") in ("HANDOFF", "TERMINATED", "STOPPED"):
-                    logger.info(f"[Sniper Supervisor] Heartbeat indicates runner status '{data.get('status')}'. Clear to start successor.")
-                    return False
-                ts = float(data.get("timestamp", 0))
-                age = time.time() - ts
-                if age < threshold_seconds:
-                    logger.info(f"[Sniper Supervisor] Active heartbeat found from runner (age: {age:.1f}s < {threshold_seconds}s).")
-                    return True
-        except Exception as e:
-            logger.warning(f"[Sniper Supervisor] Heartbeat check note: {e}")
+    # 1. Turso LibSQL heartbeat check
+    try:
+        hb = turso_get("fleet:chickenland_sniper:heartbeat")
+        if hb:
+            data = json.loads(hb) if isinstance(hb, str) else hb
+            if data.get("status") in ("HANDOFF", "TERMINATED", "STOPPED"):
+                logger.info(f"[Sniper Supervisor] Heartbeat indicates runner status '{data.get('status')}'. Clear to start successor.")
+                return False
+            ts = float(data.get("timestamp", 0))
+            age = time.time() - ts
+            if age < threshold_seconds:
+                logger.info(f"[Sniper Supervisor] Active heartbeat found from runner (age: {age:.1f}s < {threshold_seconds}s).")
+                return True
+    except Exception as e:
+        logger.warning(f"[Sniper Supervisor] Heartbeat check note: {e}")
     return False
 
 async def start_heartbeat_loop(max_runtime: float = 0.0):
@@ -1663,11 +1707,6 @@ async def start_heartbeat_loop(max_runtime: float = 0.0):
                 "exhausted_codes": len(EXHAUSTED_CODES),
                 "engine": "MTPROTO_SOCKET" if (ACTIVE_TELETHON_CLIENT and getattr(ACTIVE_TELETHON_CLIENT, "is_connected", lambda: False)()) else "HTTP_POLLER"
             }
-            if UPSTASH_URL and UPSTASH_TOKEN:
-                try:
-                    redis_command("SET", "fleet:chickenland_sniper:heartbeat", json.dumps(hb_data), "EX", "60")
-                except Exception:
-                    pass
             if TURSO_TOKEN:
                 try:
                     turso_set("fleet:chickenland_sniper:heartbeat", hb_data)
@@ -1687,11 +1726,6 @@ async def start_heartbeat_loop(max_runtime: float = 0.0):
                     "uptime_seconds": int(uptime),
                     "relay_at": time.time()
                 }
-                if UPSTASH_URL and UPSTASH_TOKEN:
-                    try:
-                        redis_command("SET", "fleet:chickenland_sniper:heartbeat", json.dumps(handoff_hb), "EX", "30")
-                    except Exception:
-                        pass
                 if TURSO_TOKEN:
                     try:
                         turso_set("fleet:chickenland_sniper:heartbeat", handoff_hb)
@@ -1705,11 +1739,6 @@ async def start_heartbeat_loop(max_runtime: float = 0.0):
                     logger.warning(f"[Sniper Relay] gh trigger note: {e_gh}")
                 # Wait 15s for successor runner to initialize before terminating current runner
                 await asyncio.sleep(15)
-                if UPSTASH_URL and UPSTASH_TOKEN:
-                    try:
-                        redis_command("DEL", "fleet:chickenland_sniper:heartbeat")
-                    except Exception:
-                        pass
                 if TURSO_TOKEN:
                     try:
                         turso_set("fleet:chickenland_sniper:heartbeat", {"status": "TERMINATED", "timestamp": 0})
@@ -1829,16 +1858,6 @@ async def start_miniempire_production_keeper():
                     })
                 except Exception:
                     pass
-            if UPSTASH_URL and UPSTASH_TOKEN:
-                try:
-                    redis_command("SET", "fleet:miniempire_keeper:heartbeat", json.dumps({
-                        "status": "HEALTHY",
-                        "timestamp": now,
-                        "pepe_tracked": len(pepe_ends),
-                        "le_tracked": len(le_ends)
-                    }))
-                except Exception:
-                    pass
 
                     await asyncio.sleep(0.3)
 
@@ -1890,19 +1909,6 @@ async def run_unified_sniper_daemon(poll_interval: float = 3.0, max_runtime: flo
     except Exception:
         pass
 
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            seen_r = redis_command("SMEMBERS", "chickenland:seen_codes")
-            if seen_r and isinstance(seen_r, list):
-                SEEN_CODES.update(seen_r)
-            claimed_r = redis_command("SMEMBERS", "chickenland:claimed_codes")
-            if claimed_r and isinstance(claimed_r, list):
-                CLAIMED_CODES.update(claimed_r)
-            ex_r = redis_command("SMEMBERS", "chickenland:exhausted_codes")
-            if ex_r and isinstance(ex_r, list):
-                EXHAUSTED_CODES.update(ex_r)
-        except Exception:
-            pass
     print(f"Pre-cached {len(SEEN_CODES)} seen codes, {len(CLAIMED_CODES)} claimed codes, and {len(EXHAUSTED_CODES)} exhausted codes.")
 
     # Startup pre-flight check: snipe any active unexhausted code immediately
