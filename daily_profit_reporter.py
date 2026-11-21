@@ -187,37 +187,43 @@ async def get_fleet_mining_totals() -> dict:
                 for uid, info in data.items():
                     bots = info.get("bots", {})
                     for b_name, b_data in bots.items():
-                        core = b_data.get("core", {})
-                        core_str = str(core)
+                        core = b_data.get("core", {}) if (isinstance(b_data, dict) and "core" in b_data) else b_data
+                        bal_str = str(b_data.get("balance", "")) if isinstance(b_data, dict) else ""
+                        core_str = f"{core} {bal_str}"
 
                         # 1. ATF Miner
-                        if "ATF" in b_name:
+                        if "atf" in b_name.lower():
                             m = re.search(r"([\d\.]+)\s*ATF", core_str)
                             if m: totals["atf"] += float(m.group(1))
 
                         # 2. Kynex Network
-                        elif "Kynex" in b_name:
+                        elif "kynex" in b_name.lower():
                             m = re.search(r"([\d\.]+)\s*KNX", core_str)
                             if m: totals["knx"] += float(m.group(1))
 
-                        # 5. PepeGram
-                        elif "Pepe" in b_name:
-                            m = re.search(r"([\d\.]+)\s*PEPE", core_str)
+                        # 3. PepeGram
+                        elif "pepe" in b_name.lower():
+                            m = re.search(r"([\d\.]+)\s*(?:PEPE|Hashes)", core_str)
                             if m: totals["pepe"] += float(m.group(1))
 
-                        # 6. AdxEarn AI
-                        elif "Adx" in b_name:
-                            m = re.search(r"([\d\.]+)\s*Points", core_str)
+                        # 4. AdxEarn AI
+                        elif "adx" in b_name.lower():
+                            m = re.search(r"([\d\.]+)\s*(?:Points|Pts)", core_str)
                             if m: totals["adx"] += float(m.group(1))
 
-                        # 8. Chicken Land
-                        elif "Chicken" in b_name:
-                            if isinstance(core, dict):
+                        # 5. Chicken Land
+                        elif "chicken" in b_name.lower():
+                            if isinstance(core, dict) and "hens" in core:
                                 totals["chicken_hens"] += int(core.get("hens", 0) or 0)
                                 totals["chicken_eggs"] += int(core.get("eggs", 0) or 0) + int(core.get("egg_bal", 0) or 0)
+                            else:
+                                m = re.search(r"([\d,]+)\s*coins\s*\(([\d,]+)\s*eggs\)", core_str, re.IGNORECASE)
+                                if m:
+                                    try: totals["chicken_eggs"] += int(m.group(2).replace(",", ""))
+                                    except Exception: pass
 
-                        # 7. EarnVault
-                        elif "EarnVault" in b_name or "earnvault" in b_name.lower():
+                        # 6. EarnVault
+                        elif "earnvault" in b_name.lower():
                             if isinstance(core, dict) and "balance" in core:
                                 try: totals["earnvault"] += float(core["balance"])
                                 except Exception: pass
@@ -225,8 +231,8 @@ async def get_fleet_mining_totals() -> dict:
                                 m = re.search(r"\$([\d\.]+)", core_str)
                                 if m: totals["earnvault"] += float(m.group(1))
 
-                        # 8. MexoEarn
-                        elif "Mexo" in b_name or "mexoearn" in b_name.lower():
+                        # 7. MexoEarn
+                        elif "mexo" in b_name.lower() or "mexoearn" in b_name.lower():
                             if isinstance(core, dict) and "balance_mxo" in core:
                                 try: totals["mexo"] += float(core["balance_mxo"])
                                 except Exception: pass
@@ -234,45 +240,45 @@ async def get_fleet_mining_totals() -> dict:
                                 m = re.search(r"([\d\.]+)\s*MXO", core_str)
                                 if m: totals["mexo"] += float(m.group(1))
 
-                        # 9. MyAgeApp
+                        # 8. MyAgeApp
                         elif "myage" in b_name.lower() or "age" in b_name.lower():
-                            if isinstance(core, dict):
+                            if isinstance(core, dict) and "points" in core:
                                 try: totals["myage"] += float(core.get("points", 0) or 0)
                                 except Exception: pass
                             else:
                                 m = re.search(r"(\d+)\s*AGE", core_str)
                                 if m: totals["myage"] += float(m.group(1))
 
-                        # 10. Lifetime Energy
-                        elif "lifetime" in b_name.lower() or "energy" in b_name.lower():
-                            if isinstance(core, dict):
+                        # 9. Lifetime Energy
+                        elif "lifetime" in b_name.lower():
+                            m = re.search(r"([\d\.]+)\s*(?:WATTS|Hashes)", core_str)
+                            if m:
+                                totals["lifetime"] += float(m.group(1))
+                            elif isinstance(core, dict) and "power" in core:
                                 try: totals["lifetime"] += float(core.get("power", 0) or 0)
                                 except Exception: pass
-                            else:
-                                m = re.search(r"(\d+)\s*WATTS", core_str)
-                                if m: totals["lifetime"] += float(m.group(1))
 
-                        # 13. Victor's Company
+                        # 10. Victor's Company
                         elif "victor" in b_name.lower():
-                            if isinstance(core, dict):
+                            m = re.search(r"([\d\.]+)\s*(?:VICX|Coins?)", core_str, re.IGNORECASE)
+                            if m:
+                                totals["victors"] += float(m.group(1))
+                            elif isinstance(core, dict) and ("balance" in core or "coins" in core):
                                 try: totals["victors"] += float(core.get("balance", 0) or core.get("coins", 0) or 0)
                                 except Exception: pass
-                            else:
-                                m = re.search(r"([\d\.]+)\s*Coins?", core_str, re.IGNORECASE)
-                                if m: totals["victors"] += float(m.group(1))
 
-                        # 14. Dillo Miner
+                        # 11. Dillo Miner
                         elif "dillo" in b_name.lower():
-                            if isinstance(core, dict):
+                            m = re.search(r"([\d\.]+)\s*DILLO", core_str)
+                            if m:
+                                totals["dillo"] += float(m.group(1))
+                            elif isinstance(core, dict) and ("balance" in core or "pool" in core):
                                 try: totals["dillo"] += float(core.get("balance", 0) or core.get("pool", 0) or 0)
                                 except Exception: pass
-                            else:
-                                m = re.search(r"([\d\.]+)\s*DILLO", core_str)
-                                if m: totals["dillo"] += float(m.group(1))
 
-                        # 16. Hunter Miner
+                        # 12. Hunter Miner
                         elif "hunter" in b_name.lower():
-                            if isinstance(core, dict):
+                            if isinstance(core, dict) and ("withdrawable_balance" in core or "mining_balance" in core or "gram_balance" in core):
                                 try:
                                     wb = float(core.get("withdrawable_balance", 0) or 0)
                                     mb = float(core.get("mining_balance", 0) or 0)
@@ -281,8 +287,10 @@ async def get_fleet_mining_totals() -> dict:
                                     totals["hunter"] += (wb + mb + gb) if (wb + mb + gb) > 0 else b
                                 except Exception: pass
                             else:
-                                m = re.search(r"([\d\.]+)\s*GRAM", core_str)
-                                if m: totals["hunter"] += float(m.group(1))
+                                m = re.search(r"Total:\s*([\d\.]+)|([\d\.]+)\s*GRAM", core_str)
+                                if m:
+                                    val = m.group(1) or m.group(2)
+                                    totals["hunter"] += float(val)
 
 
         except Exception:
@@ -493,7 +501,7 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• ⚡ <b>MexoEarn:</b> <code>{fleet_totals['mexo']:,.0f} MXO</code> earned (Shortlinks & High-Yield Quests)\n"
             f"• 🎂 <b>MyAgeApp:</b> <code>{fleet_totals['myage']:,.0f} AGE</code> accumulated (Telegram Age Valuation, Hourly Vault & Spins)\n"
             f"• 🔋 <b>Lifetime Energy:</b> <code>{fleet_totals['lifetime']:,.0f} WATTS</code> (Power & Energy Production, Ad Rolls & Tasks)\n"
-            f"• 🏢 <b>Victor's Company:</b> <code>{fleet_totals['victors']:,.0f} Coins</code> (Autonomous Mining, Shifts & Referral Commissions)\n"
+            f"• 🏢 <b>Victor's Company:</b> <code>{fleet_totals['victors']:,.2f} VICX</code> (Autonomous Mining, Shifts & Referral Commissions)\n"
             f"• ⛏️ <b>Dillo Miner:</b> <code>{fleet_totals['dillo']:,.2f} DILLO</code> (TON Jetton Protocol, 2,400 DILLO/d Passive Farm, Energy Taps & Streaks)\n"
             f"• 🎯 <b>Hunter Miner:</b> <code>{fleet_totals.get('hunter', 0.0):,.4f} GRAM</code> (TON Jetton Protocol, 12h Mining Cycles, Tasks & Instant TON Cashouts)\n"
             f"• 💎 <b>On-Chain Target TON:</b> <code>{TON_PRIMARY_WALLET}</code>\n"
