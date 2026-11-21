@@ -1055,12 +1055,14 @@ def solve_victors_with_seleniumbase():
     sweep_master_bonuses(6727787768)
 
     report_msg = (
-        f"🏢 <b>Victor's Company Cloud Turnstile Solver Report</b>\n\n"
-        f"• <b>Accounts Processed:</b> {len(raw_accounts)}\n"
-        f"• <b>Turnstile Solved & Qualified:</b> {solved_count}/{len(raw_accounts)}\n"
-        f"• <b>Master Referral Bound:</b> <code>{VICTORS_REF}</code>\n"
-        f"• <b>Execution Time:</b> {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}\n\n"
-        f"⚡ <i>100% Cloud Execution (SeleniumBase UC Stealth). Zero phone load.</i>"
+        f"🏢 <b>VICTOR'S COMPANY CLOUD TURNSTILE SOLVER REPORT</b> 🛡️\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 <b>Accounts Processed:</b> <code>{len(raw_accounts)} Fleet Accounts</code>\n"
+        f"🎯 <b>Turnstile Solved & Qualified:</b> <b>{solved_count}/{len(raw_accounts)} Qualified</b> 🟢\n"
+        f"🔗 <b>Master Referral Bound:</b> <code>{VICTORS_REF}</code>\n"
+        f"🕒 <b>Execution Timestamp:</b> <code>{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚡ <i>100% Cloud Execution (SeleniumBase UC Stealth & CDP Native). Zero phone load.</i>"
     )
     logger.info(f"📢 Final: {solved_count}/{len(raw_accounts)} accounts solved & qualified.")
     send_tg_alert(report_msg)
