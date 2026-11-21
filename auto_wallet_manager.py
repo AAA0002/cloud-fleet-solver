@@ -70,116 +70,15 @@ if os.path.exists(os.path.join(BASE_DIR, ".env")):
         pass
 
 
-def turso_set(key: str, data: Any) -> bool:
-    """Mirrors Key-Value pairs to Turso LibSQL kv_mesh (25 Million Writes/Month Quota Mesh)."""
-    if not TURSO_URL or not TURSO_TOKEN:
-        return False
-    try:
-        http_url = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
-        val = json.dumps(data) if not isinstance(data, str) else data
-        now_ts = int(time.time())
-        payload = {
-            "requests": [
-                {
-                    "type": "execute",
-                    "stmt": {
-                        "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, ?);",
-                        "args": [
-                            {"type": "text", "value": key},
-                            {"type": "text", "value": val},
-                            {"type": "integer", "value": str(now_ts)}
-                        ]
-                    }
-                }
-            ]
-        }
-        req = urllib.request.Request(
-            http_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return True
-    except Exception as e:
-        logger.debug(f"Turso SET {key} note: {e}")
-        return False
-
-
-def turso_get(key: str) -> Any:
-    """Reads Key-Value pairs from Turso LibSQL kv_mesh with automatic JSON parsing."""
-    if not TURSO_URL or not TURSO_TOKEN:
-        return None
-    try:
-        http_url = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
-        payload = {
-            "requests": [
-                {
-                    "type": "execute",
-                    "stmt": {
-                        "sql": "SELECT val FROM kv_mesh WHERE key = ? LIMIT 1;",
-                        "args": [{"type": "text", "value": key}]
-                    }
-                }
-            ]
-        }
-        req = urllib.request.Request(
-            http_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=5) as r:
-            res_j = json.loads(r.read().decode("utf-8"))
-            results = res_j.get("results", [])
-            if results and results[0].get("type") == "ok":
-                rows = results[0].get("response", {}).get("result", {}).get("rows", [])
-                if rows and len(rows) > 0:
-                    val_str = rows[0][0]["value"]
-                    val = val_str
-                    while isinstance(val, str):
-                        try:
-                            loaded = json.loads(val)
-                            if loaded == val:
-                                break
-                            val = loaded
-                        except Exception:
-                            break
-                    return val
-            return None
-    except Exception as e:
-        logger.debug(f"Turso GET {key} note: {e}")
-        return None
-
-
 from turso_mesh import turso_get, turso_set, turso_delete, turso_sadd, turso_srem, turso_smembers
 
-def upstash_get(key: str) -> Any:
-    """Reads Key-Value pairs from Turso LibSQL kv_mesh (25M ops/mo free tier)."""
-    return turso_get(key)
-
-
-def upstash_set(key: str, data: Any) -> bool:
-    """Mirrors Key-Value pairs to Turso LibSQL kv_mesh (25M ops/mo free tier)."""
-    return turso_set(key, data)
-
-
-def upstash_srem(key: str, member: str) -> bool:
-    """Removes a member from a set in Turso LibSQL kv_mesh."""
-    return turso_srem(key, member)
-
-
-def upstash_sadd(key: str, member: str) -> bool:
-    """Adds a member to a set in Turso LibSQL kv_mesh."""
-    return turso_sadd(key, member)
-
-
-def upstash_del(key: str) -> bool:
-    """Deletes a key from Turso LibSQL kv_mesh."""
-    return turso_delete(key)
-
-
-def upstash_smembers(key: str) -> List[str]:
-    """Retrieves all members of a set in Turso LibSQL kv_mesh."""
-    return turso_smembers(key)
+# Backward-compatibility aliases for legacy callers
+upstash_get = turso_get
+upstash_set = turso_set
+upstash_srem = turso_srem
+upstash_sadd = turso_sadd
+upstash_del = turso_delete
+upstash_smembers = turso_smembers
 
 
 def load_json_file(path: str, default: Any = None) -> Any:

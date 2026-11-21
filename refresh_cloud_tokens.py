@@ -239,7 +239,7 @@ def load_accounts():
     return []
 
 
-async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: str, name: str, tokens: dict):
+async def sync_tokens_to_edge_and_turso(session: aiohttp.ClientSession, uid: str, name: str, tokens: dict):
     """Pushes extracted tokens to Turso LibSQL (Primary SSOT), Supabase, and 5x Cloudflare Edge Workers."""
     # 0. Fetch existing tokens from Turso LibSQL first (Primary SSOT)
     existing_tokens = {}
@@ -360,6 +360,9 @@ async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: s
             json.dump(f_db, f, indent=2)
     except Exception:
         pass
+
+# Backward compatibility alias
+sync_tokens_to_edge_and_upstash = sync_tokens_to_edge_and_turso
 
 
 async def extract_bot_webapp_token(client: TelegramClient, bot_username: str, start_param: str = "", default_url: str = "", candidate_short_names: list = None, prefer_direct_url: bool = False) -> str:
@@ -775,9 +778,9 @@ async def extract_account_tokens(acc: dict, session: aiohttp.ClientSession):
         # NEVER join channels or subscribe to third-party bots during token extraction.
         # Side-task channel joins are ephemeral on-demand and immediately left & purged.
 
-        # Sync to Cloudflare Edge KV & Upstash Redis
+        # Sync to Cloudflare Edge KV & Turso LibSQL Primary SSOT
         if tokens:
-            await sync_tokens_to_edge_and_upstash(session, acc_uid, acc_name, tokens)
+            await sync_tokens_to_edge_and_turso(session, acc_uid, acc_name, tokens)
 
     finally:
         try:

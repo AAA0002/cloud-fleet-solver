@@ -199,8 +199,8 @@ def load_all_miniapp_tokens() -> dict:
     return {}
 
 
-def get_token_from_upstash(uid: int) -> dict:
-    """Fetch tokens for a specific account from Turso LibSQL SSOT or Upstash Redis."""
+def get_token_from_turso(uid: int) -> dict:
+    """Fetch tokens for a specific account from Turso LibSQL Primary SSOT."""
     # 1. Primary: Turso LibSQL SSOT (zero rate limits)
     if TURSO_URL and TURSO_TOKEN:
         try:
@@ -235,9 +235,11 @@ def get_token_from_upstash(uid: int) -> dict:
 
     return {}
 
+get_token_from_upstash = get_token_from_turso
 
-def get_victors_pass_from_upstash(uid: int) -> str:
-    """Fetch saved humanPass from Turso LibSQL SSOT or Upstash Redis."""
+
+def get_victors_pass_from_turso(uid: int) -> str:
+    """Fetch saved humanPass from Turso LibSQL SSOT."""
     # 1. Primary: Turso LibSQL SSOT (zero rate limits)
     if TURSO_URL and TURSO_TOKEN:
         try:
@@ -276,9 +278,11 @@ def get_victors_pass_from_upstash(uid: int) -> str:
 
     return None
 
+get_victors_pass_from_upstash = get_victors_pass_from_turso
+
 
 def mark_victors_referral_bound(uid: int):
-    """Marks account as referral bound in Upstash Redis and Turso LibSQL."""
+    """Marks account as referral bound in Turso LibSQL."""
     # Turso LibSQL update
     if TURSO_URL and TURSO_TOKEN:
         try:
@@ -315,8 +319,8 @@ def mark_victors_referral_bound(uid: int):
             pass
 
 
-def save_victors_pass_to_upstash(uid: int, human_pass: str):
-    """Saves valid Victor's Company humanPass to Turso LibSQL SSOT and Upstash Redis."""
+def save_victors_pass_to_turso(uid: int, human_pass: str):
+    """Saves valid Victor's Company humanPass to Turso LibSQL SSOT."""
     if not human_pass:
         return
 
@@ -352,6 +356,8 @@ def save_victors_pass_to_upstash(uid: int, human_pass: str):
             logger.warning(f"Note saving Victor's pass to Turso: {te}")
 
     mark_victors_referral_bound(uid)
+
+save_victors_pass_to_upstash = save_victors_pass_to_turso
 
 
 def safe_post(url: str, json_data: dict, extra_headers: dict = None) -> tuple:

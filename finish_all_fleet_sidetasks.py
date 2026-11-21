@@ -21,7 +21,7 @@ all dynamic accounts in the fleet for all 12 legitimate bots:
   12. Hunter Miner (@GramHtrsbot)
 
 Zero Phone Load (Rule 4): Runs once as a clean batch script in cloud/container,
-exits cleanly, and persists updated tokens to Upstash Redis and Cloudflare Edge.
+exits cleanly, and persists updated tokens to Turso LibSQL Primary SSOT and Cloudflare Edge.
 """
 
 import os
@@ -421,7 +421,7 @@ def extract_auth_date(tok) -> int:
         return 0
 
 async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str, str]]:
-    """Loads tokens for all dynamic fleet accounts from Turso LibSQL SSOT and Upstash Redis."""
+    """Loads tokens for all dynamic fleet accounts from Turso LibSQL SSOT and Cloudflare Edge."""
     tokens_db = {}
     
     # 0. High-Capacity Primary: Turso LibSQL SSOT (25M ops/mo, zero rate limit)

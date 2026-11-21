@@ -56,8 +56,7 @@ ADMIN_ID = os.getenv("REPORT_CHAT_ID", "6727787768")
 # Cloud integrations
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://znbbaozpevurvbfkxakz.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
-UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
+from turso_mesh import turso_get, turso_set
 TONAPI_KEY = os.getenv("TONAPI_KEY", "AGCD63WTWLGKKWYAAAAKRKZU45HTYMDI3PV7UBKKL6QDVIHG54NQDVNSQF7W3LQJ3X77QKY")
 
 async def get_live_rates(session: aiohttp.ClientSession) -> dict:
@@ -317,7 +316,7 @@ async def get_fleet_mining_totals() -> dict:
             except Exception:
                 pass
 
-    # Fallback to Turso LibSQL kv_mesh or Upstash Redis fleet:live_state if any balance is 0
+    # Fallback to Turso LibSQL kv_mesh fleet:live_state if any balance is 0
     if (totals["knx"] == 0.0 or totals["atf"] == 0.0 or totals["chicken_hens"] == 0):
         # 1. Turso LibSQL High-Capacity SSOT
         turso_url = (os.getenv("TURSO_DB_URL") or os.getenv("TURSO_URL", "")).replace("libsql://", "https://") + "/v2/pipeline"
@@ -345,26 +344,18 @@ async def get_fleet_mining_totals() -> dict:
             except Exception:
                 pass
 
-        # 2. Upstash Redis Fallback
-        if UPSTASH_URL and UPSTASH_TOKEN and (totals["knx"] == 0.0 or totals["atf"] == 0.0 or totals["chicken_hens"] == 0):
+        # 2. Turso LibSQL kv_mesh Fallback
+        if totals["knx"] == 0.0 or totals["atf"] == 0.0 or totals["chicken_hens"] == 0:
             try:
-                import urllib.request
-                req = urllib.request.Request(
-                    f"{UPSTASH_URL}/get/fleet:live_state",
-                    headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-                )
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    d = json.loads(resp.read().decode())
-                    res = d.get("result")
-                    if res:
-                        live = json.loads(res) if isinstance(res, str) else res
-                        for a in live.get("accounts", []):
-                            if totals["knx"] == 0.0:
-                                totals["knx"] += float(a.get("kynex_coins", 0) or 0)
-                            if totals["atf"] == 0.0:
-                                totals["atf"] += float(a.get("atf_balance", 0) or 0)
-                            if totals["chicken_hens"] == 0:
-                                totals["chicken_hens"] += int(a.get("chickenland_hens", 0) or 0)
+                live = turso_get("fleet:live_state")
+                if isinstance(live, dict):
+                    for a in live.get("accounts", []):
+                        if totals["knx"] == 0.0:
+                            totals["knx"] += float(a.get("kynex_coins", 0) or 0)
+                        if totals["atf"] == 0.0:
+                            totals["atf"] += float(a.get("atf_balance", 0) or 0)
+                        if totals["chicken_hens"] == 0:
+                            totals["chicken_hens"] += int(a.get("chickenland_hens", 0) or 0)
             except Exception:
                 pass
 
@@ -466,19 +457,14 @@ async def generate_and_send_report(dry_run: bool = False):
         ai_briefing = await get_ai_market_briefing(session, rates, total_payouts_bnb, wallet_bnb)
 
         active_render_label = "Dedicated Render Node (Oregon)"
-        if UPSTASH_URL and UPSTASH_TOKEN:
-            try:
-                import urllib.request
-                req_n = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:active_render_node", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-                with urllib.request.urlopen(req_n, timeout=3) as r_n:
-                    d_n = json.loads(r_n.read().decode())
-                    res_n = str(d_n.get("result", "")).lower()
-                    if "dedicated" in res_n:
-                        active_render_label = "Dedicated Render Node (Oregon)"
-                    elif "node" in res_n:
-                        active_render_label = "Dedicated Standby Node"
-            except Exception:
-                pass
+        try:
+            res_n = str(turso_get("fleet:active_render_node", "")).lower()
+            if "dedicated" in res_n:
+                active_render_label = "Dedicated Render Node (Oregon)"
+            elif "node" in res_n:
+                active_render_label = "Dedicated Standby Node"
+        except Exception:
+            pass
 
         report = (
             f"📊 <b>[MY AGY AI — Daily Financial & Fleet Ledger]</b>\n"
@@ -613,24 +599,19 @@ async def generate_and_send_report(dry_run: bool = False):
             except Exception as e:
                 print(f"Supabase daily summary note: {e}")
 
-        # 4. Cache in Upstash Serverless Redis
-        if UPSTASH_URL and UPSTASH_TOKEN:
-            try:
-                up_headers = {
-                    "Authorization": f"Bearer {UPSTASH_TOKEN}",
-                    "Content-Type": "application/json"
-                }
-                redis_data = {
-                    "date": today_date_str,
-                    "rates": rates,
-                    "wallet_bnb": wallet_bnb,
-                    "total_accounts": total_accounts,
-                    "report": report
-                }
-                async with session.post(f"{UPSTASH_URL}/set/fleet:daily_report", data=json.dumps(redis_data), headers=up_headers, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                    print(f"[Daily Reporter] Cached in Upstash: {r.status}")
-            except Exception as e:
-                print(f"Upstash daily summary note: {e}")
+        # 4. Cache in Turso LibSQL kv_mesh SSOT
+        try:
+            report_data = {
+                "date": today_date_str,
+                "rates": rates,
+                "wallet_bnb": wallet_bnb,
+                "total_accounts": total_accounts,
+                "report": report
+            }
+            turso_set("fleet:daily_report", report_data)
+            print("[Daily Reporter] Cached in Turso LibSQL kv_mesh SSOT")
+        except Exception as e:
+            print(f"Turso daily summary note: {e}")
 
 if __name__ == "__main__":
     is_dry = "--dry-run" in sys.argv

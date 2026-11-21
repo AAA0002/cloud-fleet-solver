@@ -140,27 +140,17 @@ async def process_account(account: dict, index: int, total: int):
 
         account["earnvault_init_data"] = init_data
 
-        # Sync to Upstash Redis if available
-        upstash_url = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL")
-        upstash_token = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN")
-        if upstash_url and upstash_token:
-            try:
-                get_req = urllib.request.Request(
-                    f"{upstash_url}/get/fleet:tokens:{uid}",
-                    headers={"Authorization": f"Bearer {upstash_token}"}
-                )
-                with urllib.request.urlopen(get_req, timeout=4) as u_resp:
-                    raw = json.loads(u_resp.read().decode("utf-8")).get("result")
-                    curr_toks = json.loads(raw) if raw and isinstance(raw, str) else (raw or {})
-                curr_toks["earnvault_init_data"] = init_data
-                set_req = urllib.request.Request(
-                    f"{upstash_url}/set/fleet:tokens:{uid}",
-                    data=json.dumps(curr_toks).encode("utf-8"),
-                    headers={"Authorization": f"Bearer {upstash_token}"}
-                )
-                urllib.request.urlopen(set_req, timeout=4)
-            except Exception:
-                pass
+        # Sync to Turso LibSQL Primary SSOT
+        try:
+            from turso_mesh import turso_get, turso_set
+            raw = turso_get(f"fleet:tokens:{uid}")
+            curr_toks = json.loads(raw) if raw and isinstance(raw, str) else (raw or {})
+            if not isinstance(curr_toks, dict):
+                curr_toks = {}
+            curr_toks["earnvault_init_data"] = init_data
+            turso_set(f"fleet:tokens:{uid}", curr_toks)
+        except Exception:
+            pass
 
         # 3. Authenticate with Firebase
         auth_res = call_function("telegramAuth", {"initData": init_data})

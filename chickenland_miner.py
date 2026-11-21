@@ -437,45 +437,31 @@ def load_fleet_chickenland_tokens() -> Dict[str, Dict[str, Any]]:
             pass
 
     tokens_map = {}
-    upstash_url = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL")
-    upstash_token = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN")
-    if not upstash_token and os.path.exists(os.path.join(base_dir, ".env")):
-        with open(os.path.join(base_dir, ".env"), "r", encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("UPSTASH_TOKEN=") or line.startswith("UPSTASH_REDIS_REST_TOKEN="):
-                    upstash_token = line.split("=", 1)[1].strip().strip("\"'")
-                elif line.startswith("UPSTASH_URL=") or line.startswith("UPSTASH_REDIS_REST_URL="):
-                    upstash_url = line.split("=", 1)[1].strip().strip("\"'")
-
-    if upstash_url and upstash_token:
-        try:
-            req = urllib.request.Request(
-                f"{upstash_url}/get/miniapp_tokens",
-                headers={"Authorization": f"Bearer {upstash_token}"}
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
-                res = data.get("result")
-                if res:
-                    raw_toks = json.loads(res) if isinstance(res, str) else res
-                    while isinstance(raw_toks, str):
-                        try:
-                            raw_toks = json.loads(raw_toks)
-                        except Exception:
-                            break
-                    if isinstance(raw_toks, dict):
-                        for uid, toks in raw_toks.items():
-                            if str(uid) == "8881914294" or "nancy" in str(names.get(str(uid), "")).lower():
-                                continue
-                            c_tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
-                            if c_tok:
-                                tokens_map[str(uid)] = {
-                                    "user_id": str(uid),
-                                    "name": names.get(str(uid), f"Account {uid}"),
-                                    "token": c_tok
-                                }
-        except Exception:
-            pass
+    try:
+        from turso_mesh import turso_get
+        res = turso_get("miniapp_tokens")
+        if not res:
+            res = turso_get("fleet:tokens_state")
+        if res:
+            raw_toks = json.loads(res) if isinstance(res, str) else res
+            while isinstance(raw_toks, str):
+                try:
+                    raw_toks = json.loads(raw_toks)
+                except Exception:
+                    break
+            if isinstance(raw_toks, dict):
+                for uid, toks in raw_toks.items():
+                    if str(uid) == "8881914294" or "nancy" in str(names.get(str(uid), "")).lower():
+                        continue
+                    c_tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
+                    if c_tok:
+                        tokens_map[str(uid)] = {
+                            "user_id": str(uid),
+                            "name": names.get(str(uid), f"Account {uid}"),
+                            "token": c_tok
+                        }
+    except Exception:
+        pass
 
     # Fallback to local tokens files and accounts.json
     for fpath in ["fleet_miniapp_tokens.json", "miniapp_tokens.json"]:

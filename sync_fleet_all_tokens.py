@@ -107,55 +107,12 @@ def pick_best_token(*candidates) -> str:
             best_val = c
     return best_val
 
-def upstash_get(key: str):
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return None
-    try:
-        url = f"{UPSTASH_URL}/get/{key}"
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            val = data.get("result")
-            if val:
-                if isinstance(val, str):
-                    try:
-                        return json.loads(val)
-                    except Exception:
-                        return val
-                return val
-    except Exception as e:
-        print(f"  ⚠️ Error getting {key} from Upstash: {e}")
-    return None
+from turso_mesh import turso_get, turso_set, turso_keys
 
-def upstash_set(key: str, data: dict):
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return False
-    try:
-        url = f"{UPSTASH_URL}/set/{key}"
-        payload = json.dumps(data)
-        req = urllib.request.Request(
-            url,
-            data=payload.encode("utf-8"),
-            headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status == 200
-    except Exception as e:
-        print(f"  ⚠️ Error setting {key} in Upstash: {e}")
-    return False
-
-def upstash_get_keys(pattern: str):
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return []
-    try:
-        url = f"{UPSTASH_URL}/keys/{pattern}"
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            return data.get("result") or []
-    except Exception as e:
-        print(f"  ⚠️ Error getting keys for {pattern}: {e}")
-    return []
+# Turso LibSQL Primary SSOT Key-Value Mesh
+upstash_get = turso_get
+upstash_set = turso_set
+upstash_get_keys = turso_keys
 
 def turso_set(key: str, val):
     if not TURSO_TOKEN:
