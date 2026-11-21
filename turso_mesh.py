@@ -289,7 +289,22 @@ sync_upstash_key = turso_set
 try:
     import aiohttp
 
-    async def async_turso_get(key: str, default: Any = None) -> Any:
+    async def _get_or_create_session(session: Optional[aiohttp.ClientSession] = None):
+        class _SessionCtx:
+            def __init__(self, s):
+                self._provided = s is not None
+                self._s = s
+            async def __aenter__(self):
+                if self._provided:
+                    return self._s
+                self._s = aiohttp.ClientSession()
+                return self._s
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                if not self._provided and self._s:
+                    await self._s.close()
+        return _SessionCtx(session)
+
+    async def async_turso_get(key: str, default: Any = None, session: Optional[aiohttp.ClientSession] = None) -> Any:
         if not TURSO_URL or not TURSO_TOKEN:
             return default
         http_url = TURSO_URL.replace("libsql://", "https://").rstrip("/") + "/v2/pipeline"
@@ -305,8 +320,8 @@ try:
             ]
         }
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            async with await _get_or_create_session(session) as s:
+                async with s.post(
                     http_url,
                     json=payload,
                     headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"},
@@ -323,11 +338,11 @@ try:
             logger.debug(f"async_turso_get error: {e}")
         return default
 
-    async def async_turso_set(key: str, value: Any) -> bool:
+    async def async_turso_set(key: str, value: Any, ttl: Optional[int] = None, session: Optional[aiohttp.ClientSession] = None) -> bool:
         if not TURSO_URL or not TURSO_TOKEN:
             return False
         if value is None:
-            return await async_turso_delete(key)
+            return await async_turso_delete(key, session=session)
         http_url = TURSO_URL.replace("libsql://", "https://").rstrip("/") + "/v2/pipeline"
         val_str = json.dumps(value) if not isinstance(value, str) else value
         now_ts = int(time.time())
@@ -347,8 +362,8 @@ try:
             ]
         }
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            async with await _get_or_create_session(session) as s:
+                async with s.post(
                     http_url,
                     json=payload,
                     headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"},
@@ -359,7 +374,7 @@ try:
             logger.debug(f"async_turso_set error: {e}")
             return False
 
-    async def async_turso_delete(key: str) -> bool:
+    async def async_turso_delete(key: str, session: Optional[aiohttp.ClientSession] = None) -> bool:
         if not TURSO_URL or not TURSO_TOKEN:
             return False
         http_url = TURSO_URL.replace("libsql://", "https://").rstrip("/") + "/v2/pipeline"
@@ -375,8 +390,8 @@ try:
             ]
         }
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            async with await _get_or_create_session(session) as s:
+                async with s.post(
                     http_url,
                     json=payload,
                     headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"},
@@ -387,8 +402,117 @@ try:
             logger.debug(f"async_turso_delete error: {e}")
             return False
 
+    async def async_turso_keys(pattern: str = "%", session: Optional[aiohttp.ClientSession] = None) -> List[str]:
+        if not TURSO_URL or not TURSO_TOKEN:
+            return []
+        sql_pattern = pattern.replace("*", "%")
+        http_url = TURSO_URL.replace("libsql://", "https://").rstrip("/") + "/v2/pipeline"
+        payload = {
+            "requests": [
+                {
+                    "type": "execute",
+                    "stmt": {
+                        "sql": "SELECT key FROM kv_mesh WHERE key LIKE ? ORDER BY key ASC;",
+                        "args": [{"type": "text", "value": sql_pattern}]
+                    }
+                }
+            ]
+        }
+        try:
+            async with await _get_or_create_session(session) as s:
+                async with s.post(
+                    http_url,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=6)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        rows = data.get("results", [{}])[0].get("response", {}).get("result", {}).get("rows", [])
+                        return [r[0].get("value") for r in rows if r and r[0].get("value")]
+        except Exception as e:
+            logger.debug(f"async_turso_keys error: {e}")
+        return []
+
+    async def async_turso_mget(keys: List[str], session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
+        if not keys or not TURSO_URL or not TURSO_TOKEN:
+            return {}
+        placeholders = ",".join(["?"] * len(keys))
+        http_url = TURSO_URL.replace("libsql://", "https://").rstrip("/") + "/v2/pipeline"
+        payload = {
+            "requests": [
+                {
+                    "type": "execute",
+                    "stmt": {
+                        "sql": f"SELECT key, val FROM kv_mesh WHERE key IN ({placeholders});",
+                        "args": [{"type": "text", "value": str(k)} for k in keys]
+                    }
+                }
+            ]
+        }
+        try:
+            async with await _get_or_create_session(session) as s:
+                async with s.post(
+                    http_url,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=8)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        rows = data.get("results", [{}])[0].get("response", {}).get("result", {}).get("rows", [])
+                        res = {}
+                        for r in rows:
+                            if len(r) >= 2:
+                                k = r[0].get("value")
+                                v = _decode_stored_value(r[1].get("value"))
+                                res[k] = v
+                        return res
+        except Exception as e:
+            logger.debug(f"async_turso_mget error: {e}")
+        return {}
+
+    async def async_turso_sadd(key: str, member: str, session: Optional[aiohttp.ClientSession] = None) -> bool:
+        cur = await async_turso_get(key, session=session)
+        cur_list = cur if isinstance(cur, list) else ([cur] if cur is not None else [])
+        member_str = str(member)
+        if member_str not in [str(x) for x in cur_list]:
+            cur_list.append(member_str)
+            return await async_turso_set(key, cur_list, session=session)
+        return True
+
+    async def async_turso_srem(key: str, member: str, session: Optional[aiohttp.ClientSession] = None) -> bool:
+        cur = await async_turso_get(key, session=session)
+        if not cur:
+            return True
+        cur_list = cur if isinstance(cur, list) else [cur]
+        member_str = str(member)
+        filtered = [x for x in cur_list if str(x) != member_str]
+        if len(filtered) != len(cur_list):
+            return await async_turso_set(key, filtered, session=session)
+        return True
+
+    async def async_turso_smembers(key: str, session: Optional[aiohttp.ClientSession] = None) -> List[str]:
+        cur = await async_turso_get(key, session=session)
+        if not cur:
+            return []
+        if isinstance(cur, list):
+            return [str(x) for x in cur]
+        return [str(cur)]
+
+    async def async_turso_sismember(key: str, member: str, session: Optional[aiohttp.ClientSession] = None) -> bool:
+        members = await async_turso_smembers(key, session=session)
+        return str(member) in members
+
+    # Backward compatibility aliases
     async_upstash_get = async_turso_get
     async_upstash_set = async_turso_set
     async_upstash_delete = async_turso_delete
+    async_upstash_keys = async_turso_keys
+    async_upstash_mget = async_turso_mget
+    async_upstash_sadd = async_turso_sadd
+    async_upstash_srem = async_turso_srem
+    async_upstash_smembers = async_turso_smembers
+    async_upstash_sismember = async_turso_sismember
 except ImportError:
     pass

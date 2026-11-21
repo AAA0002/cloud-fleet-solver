@@ -234,7 +234,8 @@ def sanitize_turso_libsql(dry_run: bool = False) -> int:
         "tavora", "tvr", "jvault", "jvt", "lum", "lumeon", "cryptofarm", "crypto_farm",
         "grouche", "grouchemine", "leafearn", "leaf", "pumpkin", "stones", "ailab",
         "ultrawallet", "finvora", "ainovum", "tensor", "tontrader", "tac", "usdtquad",
-        "apex", "apx", "art", "trxpower", "turbogram", "mininggram", "grc", "paidz"
+        "apex", "apx", "art", "trxpower", "turbogram", "mininggram", "grc", "paidz",
+        "astra", "bitcoincloud", "bitcoin_cloud", "ominix", "grammaster", "gram_master"
     ]
     endpoint = TURSO_URL.rstrip("/").replace("libsql://", "https://") + "/v2/pipeline"
     chunk_size = 8
