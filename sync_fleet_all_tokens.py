@@ -48,7 +48,8 @@ TARGET_BOTS = [
     "myage",
     "lifetime",
     "victors",
-    "dillo"
+    "dillo",
+    "hunter"
 ]
 
 EXCLUDED_UIDS = {"8881914294", "tokens"}
@@ -69,6 +70,8 @@ TOKEN_KEYS = [
     "victors_human_pass",
     "dillo_init_data",
     "dillo",
+    "hunter_init_data",
+    "hunter_jwt",
     # Aliases
     "pepe_init_data",
     "adx_init_data",
@@ -105,42 +108,16 @@ def pick_best_token(*candidates) -> str:
             best_val = c
     return best_val
 
-from turso_mesh import turso_get, turso_set, turso_keys
+from turso_mesh import turso_get, turso_set, turso_keys, turso_mget
 
 # Turso LibSQL Primary SSOT Key-Value Mesh
 upstash_get = turso_get
 upstash_set = turso_set
 upstash_get_keys = turso_keys
 
-def turso_set(key: str, val):
-    if not TURSO_TOKEN:
-        return False
-    try:
-        val_str = json.dumps(val) if not isinstance(val, str) else val
-        now_sec = int(time.time())
-        stmt = {
-            "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, ?)",
-            "args": [
-                {"type": "text", "value": str(key)},
-                {"type": "text", "value": val_str},
-                {"type": "integer", "value": str(now_sec)}
-            ]
-        }
-        payload = {"requests": [{"type": "execute", "stmt": stmt}]}
-        req = urllib.request.Request(
-            TURSO_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status == 200
-    except Exception as e:
-        print(f"  ⚠️ Error setting {key} in Turso: {e}")
-    return False
-
 def main():
     print("=" * 70)
-    print("🚀 AAA AUTO FLEET 14-BOT TOKEN SYNCHRONIZER & STATE UNIFIER")
+    print("🚀 AAA AUTO FLEET 12-BOT TOKEN SYNCHRONIZER & STATE UNIFIER")
     print("=" * 70)
 
     # 1. Load accounts.json
@@ -158,37 +135,39 @@ def main():
         if uid and uid != "null" and uid not in EXCLUDED_UIDS:
             accs_by_id[uid] = a
 
-    # 2. Load individual Upstash Redis keys `fleet:tokens:{uid}`
-    redis_keys = upstash_get_keys("fleet:tokens:*")
-    print(f"🌐 Found {len(redis_keys)} fleet:tokens keys in Upstash Redis")
+    # 2. Batch-load individual Turso LibSQL keys `fleet:tokens:*`
+    redis_keys = turso_keys("fleet:tokens:*")
+    print(f"🌐 Found {len(redis_keys)} fleet:tokens keys in Turso LibSQL SSOT")
 
     redis_tokens_by_id = {}
-    for k in redis_keys:
-        parts = k.split(":")
-        if len(parts) == 3:  # fleet:tokens:{uid}
-            uid = parts[2].strip()
-            if uid in EXCLUDED_UIDS or uid == "null" or not uid:
-                continue
-            data = upstash_get(k)
-            if data and isinstance(data, dict):
-                if uid not in redis_tokens_by_id:
-                    redis_tokens_by_id[uid] = {}
-                redis_tokens_by_id[uid].update(data)
-        elif len(parts) == 4:  # fleet:tokens:{uid}:{token_key}
-            uid = parts[2].strip()
-            if uid in EXCLUDED_UIDS or uid == "null" or not uid:
-                continue
-            token_key = parts[3]
-            data = upstash_get(k)
-            if data:
-                if uid not in redis_tokens_by_id:
-                    redis_tokens_by_id[uid] = {}
-                redis_tokens_by_id[uid][token_key] = data
+    # Batch-fetch keys in chunks of 50 via turso_mget for sub-second efficiency
+    for i in range(0, len(redis_keys), 50):
+        chunk = redis_keys[i:i + 50]
+        batch_vals = turso_mget(chunk)
+        for k, data in batch_vals.items():
+            parts = k.split(":")
+            if len(parts) == 3:  # fleet:tokens:{uid}
+                uid = parts[2].strip()
+                if uid in EXCLUDED_UIDS or uid == "null" or not uid:
+                    continue
+                if data and isinstance(data, dict):
+                    if uid not in redis_tokens_by_id:
+                        redis_tokens_by_id[uid] = {}
+                    redis_tokens_by_id[uid].update(data)
+            elif len(parts) == 4:  # fleet:tokens:{uid}:{token_key}
+                uid = parts[2].strip()
+                if uid in EXCLUDED_UIDS or uid == "null" or not uid:
+                    continue
+                token_key = parts[3]
+                if data:
+                    if uid not in redis_tokens_by_id:
+                        redis_tokens_by_id[uid] = {}
+                    redis_tokens_by_id[uid][token_key] = data
 
-    print(f"📦 Successfully fetched tokens for {len(redis_tokens_by_id)} accounts from Upstash")
+    print(f"📦 Successfully batch-fetched tokens for {len(redis_tokens_by_id)} accounts from Turso LibSQL")
 
-    # 3. Load existing miniapp_tokens from Upstash
-    miniapp_tokens = upstash_get("miniapp_tokens") or {}
+    # 3. Load existing miniapp_tokens from Turso LibSQL
+    miniapp_tokens = turso_get("miniapp_tokens") or {}
     if isinstance(miniapp_tokens, str):
         try:
             miniapp_tokens = json.loads(miniapp_tokens)
@@ -322,13 +301,7 @@ def main():
         json.dump(master_miniapp_tokens, f, indent=2)
     print(f"✅ Saved local fleet_miniapp_tokens.json ({len(master_miniapp_tokens)} accounts)")
 
-    # 7. Write master_miniapp_tokens to Upstash Redis `miniapp_tokens` & `fleet_miniapp_tokens`
-    s1 = upstash_set("miniapp_tokens", master_miniapp_tokens)
-    s2 = upstash_set("fleet_miniapp_tokens", master_miniapp_tokens)
-    print(f"✅ Synced master dictionary to Upstash miniapp_tokens (success={s1})")
-    print(f"✅ Synced master dictionary to Upstash fleet_miniapp_tokens (success={s2})")
-
-    # 7b. Write master_miniapp_tokens to Turso LibSQL Primary SSOT
+    # 7. Write master_miniapp_tokens to Turso LibSQL Primary SSOT
     t1 = turso_set("miniapp_tokens", master_miniapp_tokens)
     t2 = turso_set("fleet:tokens_state", master_miniapp_tokens)
     print(f"✅ Synced master dictionary to Turso miniapp_tokens (success={t1})")
@@ -358,7 +331,7 @@ def main():
 
     # 9. Audit and verify final state
     print("\n" + "=" * 70)
-    print("📊 FINAL VERIFICATION: 14-BOT COVERAGE AUDIT")
+    print("📊 FINAL VERIFICATION: 12-BOT COVERAGE AUDIT")
     print("=" * 70)
     for bot in TARGET_BOTS:
         acc_c = sum(1 for a in updated_accs if a.get(f"{bot}_init_data") or a.get(f"{bot}_token") or a.get(bot))
