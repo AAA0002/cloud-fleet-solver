@@ -455,27 +455,31 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
     names = {}
     accounts_list = []
 
-    def update_token(uid: str, tok: str):
-        if not tok or not uid:
+    def update_token(uid: str, tok: str = None, pepe_tok: str = None, le_tok: str = None):
+        if not uid:
             return
         uid = str(uid)
         if uid == "8881914294" or "nancy" in str(names.get(uid, "")).lower():
             return
-        ad = extract_auth_date(tok)
-        b64 = get_b64_token(tok)
-        if not b64:
-            return
+        ad = extract_auth_date(tok) if tok else 0
+        b64 = get_b64_token(tok) if tok else ""
         if uid not in fleet:
             fleet[uid] = {
                 "user_id": uid,
                 "name": names.get(uid, f"User {uid}"),
                 "b64_token": b64,
-                "auth_date": ad
+                "auth_date": ad,
+                "pepegram_init_data": pepe_tok or "",
+                "lifetime_energy_init_data": le_tok or ""
             }
         else:
-            if ad > fleet[uid].get("auth_date", 0):
+            if b64 and (ad > fleet[uid].get("auth_date", 0) or not fleet[uid].get("b64_token")):
                 fleet[uid]["b64_token"] = b64
                 fleet[uid]["auth_date"] = ad
+            if pepe_tok and (not fleet[uid].get("pepegram_init_data") or extract_auth_date(pepe_tok) > extract_auth_date(fleet[uid].get("pepegram_init_data", ""))):
+                fleet[uid]["pepegram_init_data"] = pepe_tok
+            if le_tok and (not fleet[uid].get("lifetime_energy_init_data") or extract_auth_date(le_tok) > extract_auth_date(fleet[uid].get("lifetime_energy_init_data", ""))):
+                fleet[uid]["lifetime_energy_init_data"] = le_tok
 
     if os.path.exists(accs_path):
         try:
@@ -485,6 +489,10 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                     uid = str(acc.get("user_id", ""))
                     if uid:
                         names[uid] = acc.get("name", f"Account {uid}")
+                        c_tok = acc.get("chickenland_init_data") or acc.get("chicken_init_data")
+                        p_tok = acc.get("pepegram_init_data") or acc.get("pepe_init_data")
+                        l_tok = acc.get("lifetime_energy_init_data") or acc.get("lifetime_init_data")
+                        update_token(uid, tok=c_tok, pepe_tok=p_tok, le_tok=l_tok)
         except Exception:
             pass
 
@@ -506,8 +514,10 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                             if uid:
                                 names[uid] = acc.get("name", f"Account {uid}")
                             tok = acc.get("chickenland_init_data") or acc.get("chicken_init_data")
-                            if tok:
-                                update_token(uid, tok)
+                            p_tok = acc.get("pepegram_init_data") or acc.get("pepe_init_data")
+                            l_tok = acc.get("lifetime_energy_init_data") or acc.get("lifetime_init_data")
+                            if tok or p_tok or l_tok:
+                                update_token(uid, tok=tok, pepe_tok=p_tok, le_tok=l_tok)
                         if accounts_list:
                             break
         except Exception:
@@ -529,16 +539,18 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                         if uid:
                             names[uid] = acc.get("name", f"Account {uid}")
                         tok = acc.get("chickenland_init_data") or acc.get("chicken_init_data")
-                        if tok:
-                            update_token(uid, tok)
+                        p_tok = acc.get("pepegram_init_data") or acc.get("pepe_init_data")
+                        l_tok = acc.get("lifetime_energy_init_data") or acc.get("lifetime_init_data")
+                        if tok or p_tok or l_tok:
+                            update_token(uid, tok=tok, pepe_tok=p_tok, le_tok=l_tok)
         except Exception:
             pass
 
     # 0. High-Capacity Primary: Turso LibSQL SSOT (Zero rate limits, 25M ops/mo)
-    # Query all atomic and compound Chicken Land keys directly from kv_mesh
+    # Query all atomic and compound Chicken Land, PepeGram, and Lifetime keys directly from kv_mesh
     if TURSO_TOKEN:
         try:
-            t_rows = turso_execute("SELECT key, val FROM kv_mesh WHERE key LIKE 'fleet:tokens:%:chickenland_init_data' OR (key LIKE 'fleet:tokens:%' AND key NOT LIKE '%:%:%:%');")
+            t_rows = turso_execute("SELECT key, val FROM kv_mesh WHERE key LIKE 'fleet:tokens:%:chickenland_init_data' OR key LIKE 'fleet:tokens:%:pepegram_init_data' OR key LIKE 'fleet:tokens:%:pepe_init_data' OR key LIKE 'fleet:tokens:%:lifetime_energy_init_data' OR key LIKE 'fleet:tokens:%:lifetime_init_data' OR (key LIKE 'fleet:tokens:%' AND key NOT LIKE '%:%:%:%');")
             if t_rows:
                 for row in t_rows:
                     r_key = row[0]
@@ -548,7 +560,15 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                     if r_key.endswith(":chickenland_init_data"):
                         uid_part = r_key.replace("fleet:tokens:", "").replace(":chickenland_init_data", "")
                         if uid_part.isdigit() and uid_part != "8881914294":
-                            update_token(uid_part, r_val)
+                            update_token(uid_part, tok=r_val)
+                    elif r_key.endswith(":pepegram_init_data") or r_key.endswith(":pepe_init_data"):
+                        uid_part = r_key.split(":")[2]
+                        if uid_part.isdigit() and uid_part != "8881914294":
+                            update_token(uid_part, pepe_tok=r_val)
+                    elif r_key.endswith(":lifetime_energy_init_data") or r_key.endswith(":lifetime_init_data"):
+                        uid_part = r_key.split(":")[2]
+                        if uid_part.isdigit() and uid_part != "8881914294":
+                            update_token(uid_part, le_tok=r_val)
                     elif r_key.count(":") == 2:
                         uid_part = r_key.split(":")[2]
                         if uid_part.isdigit() and uid_part != "8881914294":
@@ -558,8 +578,9 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                                     if "name" in d_val and uid_part not in names:
                                         names[uid_part] = d_val["name"]
                                     c_tok = d_val.get("chickenland_init_data") or d_val.get("chicken_init_data")
-                                    if c_tok:
-                                        update_token(uid_part, c_tok)
+                                    p_tok = d_val.get("pepegram_init_data") or d_val.get("pepe_init_data")
+                                    l_tok = d_val.get("lifetime_energy_init_data") or d_val.get("lifetime_init_data")
+                                    update_token(uid_part, tok=c_tok, pepe_tok=p_tok, le_tok=l_tok)
                             except Exception:
                                 pass
         except Exception as te:
@@ -577,9 +598,11 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                         break
                 if isinstance(tok_map, dict):
                     for uid, toks in tok_map.items():
-                        tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
-                        if tok:
-                            update_token(uid, tok)
+                        if isinstance(toks, dict):
+                            tok = toks.get("chickenland_init_data") or toks.get("chicken_init_data")
+                            p_tok = toks.get("pepegram_init_data") or toks.get("pepe_init_data")
+                            l_tok = toks.get("lifetime_energy_init_data") or toks.get("lifetime_init_data")
+                            update_token(uid, tok=tok, pepe_tok=p_tok, le_tok=l_tok)
         except Exception:
             pass
 
@@ -596,19 +619,21 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                         break
                 if isinstance(tok_map, dict):
                     for uid, toks in tok_map.items():
-                        tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
-                        if tok:
-                            update_token(uid, tok)
+                        if isinstance(toks, dict):
+                            tok = toks.get("chickenland_init_data") or toks.get("chicken_init_data")
+                            p_tok = toks.get("pepegram_init_data") or toks.get("pepe_init_data")
+                            l_tok = toks.get("lifetime_energy_init_data") or toks.get("lifetime_init_data")
+                            update_token(uid, tok=tok, pepe_tok=p_tok, le_tok=l_tok)
         except Exception:
             pass
 
-    # 2. Check individual keys in Redis ONLY if still missing accounts
-    if len(fleet) < 23 and accounts_list:
+    # 2. Check individual keys in Redis
+    if accounts_list:
         for acc in accounts_list:
             uid = str(acc.get("user_id", ""))
             if uid == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
                 continue
-            if uid and UPSTASH_URL and UPSTASH_TOKEN and uid not in fleet:
+            if uid and UPSTASH_URL and UPSTASH_TOKEN and (uid not in fleet or not fleet[uid].get("pepegram_init_data")):
                 try:
                     res = redis_command("GET", f"fleet:tokens:{uid}")
                     if res:
@@ -620,14 +645,15 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                                 break
                         if isinstance(u_toks, dict):
                             tok = u_toks.get("chickenland_init_data") or u_toks.get("chicken_init_data")
-                            if tok:
-                                update_token(uid, tok)
+                            p_tok = u_toks.get("pepegram_init_data") or u_toks.get("pepe_init_data")
+                            l_tok = u_toks.get("lifetime_energy_init_data") or u_toks.get("lifetime_init_data")
+                            update_token(uid, tok=tok, pepe_tok=p_tok, le_tok=l_tok)
                 except Exception:
                     pass
                 try:
                     res_ind = redis_command("GET", f"fleet:tokens:{uid}:chickenland_init_data")
                     if res_ind and isinstance(res_ind, str) and not res_ind.startswith("{"):
-                        update_token(uid, res_ind)
+                        update_token(uid, tok=res_ind)
                 except Exception:
                     pass
 
@@ -637,8 +663,10 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         if uid == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
             continue
         tok = acc.get("chickenland_init_data") or acc.get("chicken_init_data")
-        if tok and isinstance(tok, str):
-            update_token(uid, tok)
+        p_tok = acc.get("pepegram_init_data") or acc.get("pepe_init_data")
+        l_tok = acc.get("lifetime_energy_init_data") or acc.get("lifetime_init_data")
+        if tok or p_tok or l_tok:
+            update_token(uid, tok=tok, pepe_tok=p_tok, le_tok=l_tok)
 
     # 4. Fallback to fleet_miniapp_tokens.json
     if os.path.exists(tokens_path):
@@ -652,9 +680,12 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                         break
                 if isinstance(data, dict):
                     for uid, toks in data.items():
-                        tok = (toks.get("chickenland_init_data") or toks.get("chicken_init_data")) if isinstance(toks, dict) else None
-                        if tok:
-                            update_token(uid, tok)
+                        if isinstance(toks, dict):
+                            tok = toks.get("chickenland_init_data") or toks.get("chicken_init_data")
+                            p_tok = toks.get("pepegram_init_data") or toks.get("pepe_init_data")
+                            l_tok = toks.get("lifetime_energy_init_data") or toks.get("lifetime_init_data")
+                            if tok or p_tok or l_tok:
+                                update_token(uid, tok=tok, pepe_tok=p_tok, le_tok=l_tok)
         except Exception:
             pass
 
@@ -676,8 +707,10 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                             if not isinstance(toks, dict):
                                 continue
                             tok = toks.get("chickenland_init_data") or toks.get("chicken_init_data")
-                            if tok:
-                                update_token(uid, tok)
+                            p_tok = toks.get("pepegram_init_data") or toks.get("pepe_init_data")
+                            l_tok = toks.get("lifetime_energy_init_data") or toks.get("lifetime_init_data")
+                            if tok or p_tok or l_tok:
+                                update_token(uid, tok=tok, pepe_tok=p_tok, le_tok=l_tok)
                         if len(fleet) >= 23:
                             break
         except Exception:
@@ -1749,6 +1782,12 @@ async def start_miniempire_production_keeper():
                                         msg = data.get("message", "ok")
                                         if msg != "session already active":
                                             logger.info(f"[MiniEmpire Keeper] PepeGram production restarted for {uid}! Ends at {new_ends}")
+                                        else:
+                                            logger.debug(f"[MiniEmpire Keeper] PepeGram {uid} active session verified (ends at {new_ends})")
+                                    else:
+                                        logger.warning(f"[MiniEmpire Keeper] PepeGram {uid} response without ends_at: {data}")
+                                elif resp.status == 401:
+                                    logger.warning(f"[MiniEmpire Keeper] PepeGram {uid} token 401 Unauthorized (session expired)")
                         except Exception as e_p:
                             logger.debug(f"[MiniEmpire Keeper] PepeGram {uid} note: {e_p}")
 
@@ -1768,8 +1807,38 @@ async def start_miniempire_production_keeper():
                                         msg = data.get("message", "ok")
                                         if msg != "session already active":
                                             logger.info(f"[MiniEmpire Keeper] Lifetime Energy production restarted for {uid}! Ends at {new_ends}")
+                                        else:
+                                            logger.debug(f"[MiniEmpire Keeper] Lifetime {uid} active session verified (ends at {new_ends})")
+                                    else:
+                                        logger.warning(f"[MiniEmpire Keeper] Lifetime {uid} response without ends_at: {data}")
+                                elif resp.status == 401:
+                                    logger.warning(f"[MiniEmpire Keeper] Lifetime {uid} token 401 Unauthorized (session expired)")
                         except Exception as e_le:
                             logger.debug(f"[MiniEmpire Keeper] Lifetime {uid} note: {e_le}")
+
+                    await asyncio.sleep(0.3)
+
+            # Record keeper heartbeat to Turso & Upstash
+            if TURSO_TOKEN:
+                try:
+                    turso_set("fleet:miniempire_keeper:heartbeat", {
+                        "status": "HEALTHY",
+                        "timestamp": now,
+                        "pepe_tracked": len(pepe_ends),
+                        "le_tracked": len(le_ends)
+                    })
+                except Exception:
+                    pass
+            if UPSTASH_URL and UPSTASH_TOKEN:
+                try:
+                    redis_command("SET", "fleet:miniempire_keeper:heartbeat", json.dumps({
+                        "status": "HEALTHY",
+                        "timestamp": now,
+                        "pepe_tracked": len(pepe_ends),
+                        "le_tracked": len(le_ends)
+                    }))
+                except Exception:
+                    pass
 
                     await asyncio.sleep(0.3)
 
