@@ -534,7 +534,37 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
-    # 0. Turso LibSQL Mesh SSOT (Zero rate limits, 25M ops/mo)
+    # 0. High-Capacity Primary: Turso LibSQL SSOT (Zero rate limits, 25M ops/mo)
+    # Query all atomic and compound Chicken Land keys directly from kv_mesh
+    if TURSO_TOKEN:
+        try:
+            t_rows = turso_execute("SELECT key, val FROM kv_mesh WHERE key LIKE 'fleet:tokens:%:chickenland_init_data' OR (key LIKE 'fleet:tokens:%' AND key NOT LIKE '%:%:%:%');")
+            if t_rows:
+                for row in t_rows:
+                    r_key = row[0]
+                    r_val = row[1]
+                    if not r_val:
+                        continue
+                    if r_key.endswith(":chickenland_init_data"):
+                        uid_part = r_key.replace("fleet:tokens:", "").replace(":chickenland_init_data", "")
+                        if uid_part.isdigit() and uid_part != "8881914294":
+                            update_token(uid_part, r_val)
+                    elif r_key.count(":") == 2:
+                        uid_part = r_key.split(":")[2]
+                        if uid_part.isdigit() and uid_part != "8881914294":
+                            try:
+                                d_val = json.loads(r_val) if isinstance(r_val, str) else r_val
+                                if isinstance(d_val, dict):
+                                    if "name" in d_val and uid_part not in names:
+                                        names[uid_part] = d_val["name"]
+                                    c_tok = d_val.get("chickenland_init_data") or d_val.get("chicken_init_data")
+                                    if c_tok:
+                                        update_token(uid_part, c_tok)
+                            except Exception:
+                                pass
+        except Exception as te:
+            logger.debug(f"Turso atomic tokens query note: {te}")
+
     for turso_k in ("fleet:tokens_state", "miniapp_tokens"):
         try:
             res_turso = turso_get(turso_k)
@@ -552,31 +582,6 @@ def load_fleet_tokens(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
                             update_token(uid, tok)
         except Exception:
             pass
-
-    # 0.1 Check individual keys in Turso LibSQL for any accounts missing from miniapp_tokens
-    if len(fleet) < 23 and accounts_list:
-        for acc in accounts_list:
-            uid = str(acc.get("user_id") or acc.get("id") or "")
-            if not uid or uid == "8881914294" or "nancy" in str(acc.get("name", "")).lower():
-                continue
-            if uid not in fleet or not fleet[uid].get("b64_token"):
-                try:
-                    res_ind = turso_get(f"fleet:tokens:{uid}")
-                    if res_ind:
-                        u_toks = json.loads(res_ind) if isinstance(res_ind, str) else res_ind
-                        if isinstance(u_toks, dict):
-                            tok = u_toks.get("chickenland_init_data") or u_toks.get("chicken_init_data")
-                            if tok:
-                                update_token(uid, tok)
-                except Exception:
-                    pass
-                if uid not in fleet or not fleet[uid].get("b64_token"):
-                    try:
-                        res_single = turso_get(f"fleet:tokens:{uid}:chickenland_init_data")
-                        if res_single and isinstance(res_single, str) and not res_single.startswith("{"):
-                            update_token(uid, res_single)
-                    except Exception:
-                        pass
 
     # 1. Upstash Redis monolithic miniapp_tokens (Secondary cache)
     if UPSTASH_URL and UPSTASH_TOKEN and len(fleet) < 23:
@@ -1134,16 +1139,25 @@ async def snipe_promo_fleet(
                 except Exception:
                     pass
 
+                pct = (len(successful) / len(fleet) * 100) if fleet else 100
+                latency_ms = int(duration * 1000)
+                speed_badge = "⚡ Ultra-Fast" if duration < 3.0 else ("⚡ High-Speed" if duration < 6.0 else "⏱️ Normal")
+
                 alert_msg = (
-                    f"⚡ <b>CHICKEN LAND PROMO CODE SNIPED!</b> 🐔\n\n"
-                    f"🎟 <b>Code:</b> <code>{code}</code>\n"
-                    f"💰 <b>Total Coins Claimed:</b> +{total_coins:,} Coins\n"
-                    f"👥 <b>Fleet Success:</b> {len(successful)}/{len(fleet)} accounts claimed\n"
-                    f"⏱ <b>Burst Latency:</b> {total_time}s\n"
+                    f"⚡ <b>CHICKEN LAND PROMO CODE SNIPED!</b> 🐔\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎟 <b>Promo Code:</b> <code>{code}</code>\n"
+                    f"💰 <b>Total Coins Claimed:</b> <b>+{total_coins:,} Coins</b>\n"
+                    f"👥 <b>Fleet Success:</b> <code>{len(successful)}/{len(fleet)} accounts ({pct:.0f}%)</code> 🟢\n"
+                    f"⏱ <b>Burst Reaction:</b> <code>{duration:.3f}s ({latency_ms}ms)</code> • <i>{speed_badge}</i>\n"
                 )
                 if hens_bought > 0:
-                    alert_msg += f"🐣 <b>Autonomous Expansion:</b> {hens_bought} basic hens purchased!\n"
-                alert_msg += f"🛡 <i>Unlimited Public Cloud Runner & Turso Engine</i>"
+                    alert_msg += f"🐣 <b>Hen Flocks Purchased:</b> <b>+{hens_bought} Hens</b> <i>(Auto-Compounded)</i>\n"
+                alert_msg += (
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🛡️ <b>Engine:</b> <code>GitHub Actions Headless Runner & Turso SSOT</code>\n"
+                    f"🌐 <b>Network:</b> <code>0ms Cloud Socket Push • Direct RPC Gateway</code>"
+                )
                 send_telegram_alert(alert_msg, code=code)
                 log_axiom_event("chickenland_sniper", "promo_sniped", "info", {
                     "code": code,
@@ -1167,12 +1181,13 @@ async def snipe_promo_fleet(
                     pass
             elif unauth_count >= max(5, int(len(fleet) * 0.6)):
                 alert_msg = (
-                    f"⚠️ <b>CHICKEN LAND PROMO SNIPER ALERT</b> 🐔\n\n"
-                    f"🎟 <b>Code Detected:</b> <code>{code}</code>\n"
-                    f"❌ <b>Error:</b> {unauth_count}/{len(fleet)} accounts failed with <b>401 Unauthorized (Expired Tokens)</b>\n"
-                    f"⏱ <b>Burst Latency:</b> {total_time}s\n"
-                    f"🔄 <b>Autonomous Action:</b> Triggering emergency token refresh via GitHub Actions Public Runner & Turso...\n"
-                    f"🛡 <i>Unlimited Public Cloud Runner & Turso Engine</i>"
+                    f"⚠️ <b>CHICKEN LAND TOKEN REFRESH REQUIRED</b> 🐔\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎟 <b>Target Code:</b> <code>{code}</code>\n"
+                    f"❌ <b>Expired Tokens:</b> <code>{unauth_count}/{len(fleet)} accounts rejected (401 Unauthorized)</code>\n"
+                    f"🔄 <b>Autonomous Action:</b> <i>Triggering MTProto Cloud Token Refresher...</i>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🛡️ <b>Engine:</b> <code>Self-Healing Public Cloud Runner Mesh</code>"
                 )
                 send_telegram_alert(alert_msg, code=code)
                 asyncio.create_task(trigger_emergency_token_refresh())
@@ -1184,13 +1199,15 @@ async def snipe_promo_fleet(
                     CLAIMED_CODES.add(code)
                     return report
 
-                status_desc = "All player spots already claimed by public users" if is_full else "Code validity period has expired"
+                status_desc = "All player spots claimed by public users" if is_full else "Code validity period has expired"
                 alert_msg = (
-                    f"ℹ️ <b>CHICKEN LAND PROMO CODE EXHAUSTED</b> 🐔\n\n"
-                    f"🎟 <b>Code:</b> <code>{code}</code>\n"
-                    f"❌ <b>Status:</b> {status_desc}\n"
-                    f"⏱ <b>Burst Reaction Latency:</b> {total_time}s\n"
-                    f"🛡 <i>Unlimited Public Cloud Runner & Turso Engine</i>"
+                    f"ℹ️ <b>CHICKEN LAND PROMO CODE EXHAUSTED</b> 🐔\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎟 <b>Detected Code:</b> <code>{code}</code>\n"
+                    f"⚠️ <b>Upstream Status:</b> <code>{status_desc}</code>\n"
+                    f"⏱ <b>Reaction Speed:</b> <code>{duration:.3f}s</code>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🛡️ <b>Engine:</b> <code>Continuous Cloud WebSocket & Poller Active</code>"
                 )
                 send_telegram_alert(alert_msg, code=code)
 
