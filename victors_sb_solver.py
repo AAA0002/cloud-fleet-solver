@@ -29,6 +29,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 UPSTASH_URL = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
 UPSTASH_TOKEN = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
+TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
+TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or ""
 ALERT_BOT_TOKEN = os.getenv("ALERT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN") or os.getenv("REPORT_BOT_TOKEN") or ""
 OWNER_ID = os.getenv("OWNER_ID") or "6727787768"
 
@@ -38,12 +40,18 @@ if not UPSTASH_TOKEN or "internal-dodo" in UPSTASH_URL:
         try:
             with open(env_file, "r", encoding="utf-8", errors="replace") as f:
                 for line in f:
-                    if "=" in line and "UPSTASH" in line:
+                    if "=" in line:
                         k, v = line.strip().split("=", 1)
-                        if "URL" in k and not os.getenv("UPSTASH_URL"):
-                            UPSTASH_URL = v.strip("\"' ")
-                        if "TOKEN" in k and not UPSTASH_TOKEN:
-                            UPSTASH_TOKEN = v.strip("\"' ")
+                        if "UPSTASH" in k:
+                            if "URL" in k and not os.getenv("UPSTASH_URL"):
+                                UPSTASH_URL = v.strip("\"' ")
+                            if "TOKEN" in k and not UPSTASH_TOKEN:
+                                UPSTASH_TOKEN = v.strip("\"' ")
+                        if "TURSO" in k:
+                            if "URL" in k and not os.getenv("TURSO_DB_URL"):
+                                TURSO_URL = v.strip("\"' ")
+                            if "TOKEN" in k and not TURSO_TOKEN:
+                                TURSO_TOKEN = v.strip("\"' ")
         except Exception:
             pass
 
@@ -210,7 +218,34 @@ def get_token_from_upstash(uid: int) -> dict:
 
 
 def get_victors_pass_from_upstash(uid: int) -> str:
-    """Fetch saved humanPass from Upstash Redis."""
+    """Fetch saved humanPass from Turso LibSQL SSOT or Upstash Redis."""
+    # 1. Primary: Turso LibSQL SSOT (zero rate limits)
+    if TURSO_URL and TURSO_TOKEN:
+        try:
+            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+            t_req = json.dumps({
+                "requests": [
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = ? LIMIT 1;", "args": [{"type": "text", "value": f"victors:pass:{uid}"}]}},
+                    {"type": "close"}
+                ]
+            }).encode()
+            req = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode())
+                results = data.get("results", [])
+                if results:
+                    rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                    if rows:
+                        r_val = rows[0][0]["value"]
+                        d = robust_json_loads(r_val)
+                        if isinstance(d, dict) and d.get("humanPass"):
+                            return d["humanPass"]
+                        elif isinstance(d, str) and len(d) > 10:
+                            return d
+        except Exception:
+            pass
+
+    # 2. Secondary: Upstash Redis
     if not (UPSTASH_URL and UPSTASH_TOKEN):
         return None
     try:
@@ -233,7 +268,23 @@ def get_victors_pass_from_upstash(uid: int) -> str:
 
 
 def mark_victors_referral_bound(uid: int):
-    """Marks account as referral bound in Upstash Redis fleet:accounts."""
+    """Marks account as referral bound in Upstash Redis and Turso LibSQL."""
+    # Turso LibSQL update
+    if TURSO_URL and TURSO_TOKEN:
+        try:
+            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+            t_req = json.dumps({
+                "requests": [
+                    {"type": "execute", "stmt": {"sql": "UPDATE kv_mesh SET val = json_set(val, '$.victors_referral_bound', true) WHERE key = ?;", "args": [{"type": "text", "value": f"account:{uid}"}]}},
+                    {"type": "close"}
+                ]
+            }).encode()
+            req = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=6):
+                pass
+        except Exception:
+            pass
+
     if not (UPSTASH_URL and UPSTASH_TOKEN):
         return
     try:
@@ -264,29 +315,57 @@ def mark_victors_referral_bound(uid: int):
 
 
 def save_victors_pass_to_upstash(uid: int, human_pass: str):
-    """Saves valid Victor's Company humanPass to Upstash Redis with 24-hour TTL."""
-    if not (UPSTASH_URL and UPSTASH_TOKEN and human_pass):
+    """Saves valid Victor's Company humanPass to Turso LibSQL SSOT and Upstash Redis."""
+    if not human_pass:
         return
-    try:
-        val = json.dumps({"humanPass": human_pass, "updated_at": time.time()})
-        req = urllib.request.Request(
-            f"{UPSTASH_URL}/set/victors:pass:{uid}",
-            data=val.encode(),
-            headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-        # Set 24h TTL
-        req_ttl = urllib.request.Request(
-            f"{UPSTASH_URL}/expire/victors:pass:{uid}/86400",
-            headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-        )
-        with urllib.request.urlopen(req_ttl, timeout=5):
-            pass
-        mark_victors_referral_bound(uid)
-    except Exception as e:
-        logger.warning(f"Error saving Victor's pass to Redis: {e}")
+
+    val = json.dumps({"humanPass": human_pass, "updated_at": time.time()})
+
+    # 1. Primary: Turso LibSQL SSOT
+    if TURSO_URL and TURSO_TOKEN:
+        try:
+            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+            t_req = json.dumps({
+                "requests": [
+                    {"type": "execute", "stmt": {
+                        "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, ?);",
+                        "args": [{"type": "text", "value": f"victors:pass:{uid}"}, {"type": "text", "value": val}, {"type": "integer", "value": int(time.time())}]
+                    }},
+                    {"type": "execute", "stmt": {
+                        "sql": "UPDATE kv_mesh SET val = json_set(val, '$.victors_pass', ?) WHERE key = ?;",
+                        "args": [{"type": "text", "value": human_pass}, {"type": "text", "value": f"account:{uid}"}]
+                    }},
+                    {"type": "close"}
+                ]
+            }).encode()
+            req = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=6):
+                pass
+            logger.info(f"✅ Saved Victor's pass for {uid} to Turso LibSQL SSOT.")
+        except Exception as te:
+            logger.warning(f"Note saving Victor's pass to Turso: {te}")
+
+    # 2. Secondary: Upstash Redis with 24-hour TTL
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        try:
+            req = urllib.request.Request(
+                f"{UPSTASH_URL}/set/victors:pass:{uid}",
+                data=val.encode(),
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10):
+                pass
+            req_ttl = urllib.request.Request(
+                f"{UPSTASH_URL}/expire/victors:pass:{uid}/86400",
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+            )
+            with urllib.request.urlopen(req_ttl, timeout=5):
+                pass
+        except Exception as e:
+            logger.warning(f"Error saving Victor's pass to Redis: {e}")
+
+    mark_victors_referral_bound(uid)
 
 
 def safe_post(url: str, json_data: dict, extra_headers: dict = None) -> tuple:
