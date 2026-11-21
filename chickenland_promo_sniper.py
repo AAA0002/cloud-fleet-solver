@@ -54,6 +54,14 @@ RAW_CHANNEL_ID = 4433995185
 CHANNEL_URL = "https://t.me/s/ChickenLandCodes"
 RPC_URL = "https://app8968434282.tgcloud.ai/api/rpc"
 
+# Dual Channel Support: Promo Codes & News channels
+TARGET_CHANNELS = [
+    {"username": "ChickenLandCodes", "id": -1004433995185, "raw_id": 4433995185, "url": "https://t.me/s/ChickenLandCodes"},
+    {"username": "LandChickenNews", "id": -1004361242435, "raw_id": 4361242435, "url": "https://t.me/s/LandChickenNews"}
+]
+CHANNEL_USERNAMES = {"chickenlandcodes", "landchickennews"}
+VALID_CHAT_IDS = {-1004433995185, 4433995185, -1004361242435, 4361242435}
+
 # Turso LibSQL Key-Value Mesh (table: kv_mesh, 25M free ops/month, zero rate-limit)
 TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
 TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_TOKEN") or os.getenv("TURSO_AUTH_TOKEN") or ""
@@ -68,8 +76,26 @@ API_HASH = os.getenv("API_HASH") or os.getenv("TELEGRAM_API_HASH") or "5cd9e5bbf
 USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
 SCRAPER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
+# Resilient Multi-Pattern Code Extraction (Catches standard, custom, pointer and keyword-prefixed codes)
+CODE_PATTERNS = [
+    # Monospace tags in HTML / Markdown
+    re.compile(r'<code>([A-Za-z0-9_-]{4,22})</code>', re.IGNORECASE),
+    re.compile(r'`([A-Za-z0-9_-]{4,22})`'),
+    re.compile(r'\*\*([A-Za-z0-9_-]{4,22})\*\*'),
+    # Pointers and emojis surrounding code (e.g. 👉 CLNWE6JY7B 👈, 🎁 CODE 🎁, 👇 CODE 👇)
+    re.compile(r'(?:👉|👇|🎁|🔑|🏷️|🎟️)\s*([A-Za-z0-9_-]{4,22})\s*(?:👈|👆|🎁|🔑|🏷️|🎟️)', re.IGNORECASE),
+    # Keyword prefix (e.g. "Promo code: XXXXX", "Code - XXXXX", "Код: XXXXX")
+    re.compile(r'(?:promo\s*code|promocode|bonus\s*code|code|код|промокод|codice)\s*[:=\-–—]\s*([A-Za-z0-9_-]{4,22})', re.IGNORECASE),
+    # Action prefix (e.g. "Use code: XXXXX", "Enter promo: XXXXX")
+    re.compile(r'(?:use|enter|claim|new)\s+(?:code|promo)\s*[:=\-–—]?\s*([A-Za-z0-9_-]{4,22})', re.IGNORECASE),
+    # Official Chicken Land 10-char promo codes (CL + 8 alphanumeric)
+    re.compile(r'\b(CL[A-Za-z0-9]{8})\b'),
+    # General CL-prefixed promo codes (e.g. CLSPECIAL99)
+    re.compile(r'\b(CL[A-Za-z0-9_-]{4,18})\b'),
+]
+
 CODE_REGEX = re.compile(
-    r'\b(CL[A-Za-z0-9]{6,14})\b|<code>([A-Za-z0-9]{6,16})</code>|`([A-Za-z0-9]{6,16})`|👉\s*([A-Za-z0-9]{6,16})\s*👈',
+    r'\b(CL[A-Za-z0-9]{8})\b|<code>([A-Za-z0-9_-]{4,22})</code>|`([A-Za-z0-9_-]{4,22})`|(?:👉|👇|🎁|🔑|🏷️|🎟️)\s*([A-Za-z0-9_-]{4,22})\s*(?:👈|👆|🎁|🔑|🏷️|🎟️)',
     re.IGNORECASE
 )
 
@@ -369,12 +395,9 @@ def mark_code_claimed(code: str):
     code = code.strip().upper()
     CLAIMED_CODES.add(code)
     try:
-        redis_command("SADD", "chickenland:claimed_codes", code)
-    except Exception:
-        pass
-    try:
         claimed_list = list(CLAIMED_CODES)[-200:]
         turso_set("chickenland:claimed_codes", claimed_list)
+        turso_set(f"chickenland:claimed_codes_set:{code}", "1")
     except Exception:
         pass
 
@@ -382,12 +405,9 @@ def mark_code_exhausted(code: str):
     code = code.strip().upper()
     EXHAUSTED_CODES.add(code)
     try:
-        redis_command("SADD", "chickenland:exhausted_codes", code)
-    except Exception:
-        pass
-    try:
         ex_list = list(EXHAUSTED_CODES)[-200:]
         turso_set("chickenland:exhausted_codes", ex_list)
+        turso_set(f"chickenland:exhausted_codes_set:{code}", "1")
     except Exception:
         pass
 
@@ -792,31 +812,81 @@ async def prewarm_warm_session():
     except Exception:
         pass
 
+def check_is_exhausted(text: str) -> bool:
+    """Evaluates if message specifically indicates code capacity/time is exhausted."""
+    if not text:
+        return False
+    text_u = text.upper()
+    # Explicit status banners
+    if any(k in text_u for k in ("ALL CLAIMED", "ALL_CLAIMED", "EXHAUSTED", "PLAYERS GOT IT", "LIMIT REACHED", "ENDED")):
+        return True
+    if "❌" in text and any(w in text_u for w in ("EXPIRED", "EXHAUSTED", "CLAIMED")):
+        return True
+    # Strikethrough code (e.g. ~CODE~ or <s>CODE</s>)
+    if re.search(r'(?:~|<s>|<strike>)[A-Za-z0-9_-]{4,20}(?:~|</s>|</strike>)', text):
+        return True
+    # Capacity indicators (e.g. — 1,000 / 1,000 or 500/500)
+    m_cap = re.search(r'([\d,]+)\s*/\s*([\d,]+)', text)
+    if m_cap:
+        c1 = m_cap.group(1).replace(",", "")
+        c2 = m_cap.group(2).replace(",", "")
+        if c1.isdigit() and c2.isdigit() and int(c1) >= int(c2) and int(c2) > 0:
+            return True
+    return False
+
+EXCLUDED_CODE_WORDS = {
+    "CLAIMED", "CLAIM", "CLEAR", "CLEAN", "CLOSE", "CLOSED", "CLOUD", "CLIENT", "CLASS", "CLICK", "CLICKED",
+    "GAME", "TASKS", "PROMO", "CODE", "CODES", "COINS", "PLAYERS", "VALID", "REWARD", "HOURS", "HOUR",
+    "TODAY", "CHICKEN", "LAND", "UPDATE", "NEWS", "MINUTES", "MINUTE", "FIRST", "SECOND", "CHANNEL",
+    "OFFER", "LIMITED", "DEPOSIT", "BONUS", "FREE", "EVENTS", "EVENT", "IMPORTANT", "START", "OPEN", "BRING"
+}
+
 def extract_code_from_text(text: str) -> Optional[Dict[str, Any]]:
     """
-    Extracts promo code and evaluates claim status from message text.
+    Extracts promo code and evaluates claim status from text using multi-pattern matching.
     Returns {'code': str, 'is_exhausted': bool} or None.
     """
     if not text:
         return None
-    m = CODE_REGEX.search(text)
-    if not m:
-        return None
-    code = (m.group(1) or m.group(2) or m.group(3) or m.group(4) or "").strip().upper()
-    if not code:
-        return None
+    for pat in CODE_PATTERNS:
+        for m in pat.finditer(text):
+            code = m.group(1).strip().upper()
+            code = re.sub(r'^[^A-Za-z0-9]+|[^A-Za-z0-9]+$', '', code)
+            if 4 <= len(code) <= 22:
+                if code in EXCLUDED_CODE_WORDS:
+                    continue
+                is_ex = check_is_exhausted(text)
+                return {"code": code, "is_exhausted": is_ex}
+    return None
 
-    # Exhaustion indicators (case-insensitive and resilient across all limit tiers)
-    text_u = text.upper()
-    is_exhausted = (
-        "ALL CLAIMED" in text_u
-        or "ALL_CLAIMED" in text_u
-        or "EXPIRED" in text_u
-        or "EXHAUSTED" in text_u
-        or "PLAYERS GOT IT" in text_u
-        or bool(re.search(r'—\s*[\d,]+\s*/\s*[\d,]+', text))
-    )
-    return {"code": code, "is_exhausted": is_exhausted}
+def extract_code_from_event(event) -> Optional[Dict[str, Any]]:
+    """
+    Extracts promo code directly from Telethon Event/Message with 0ms entity resolution.
+    Inspects MessageEntityCode and MessageEntityPre first (100% accurate Telegram formatting),
+    then falls back to high-res regex extraction on raw_text.
+    """
+    msg = getattr(event, 'message', event)
+    if not msg:
+        return None
+    raw = msg.raw_text or (msg.message if hasattr(msg, 'message') else "") or ""
+
+    # 1. Direct MTProto Entity Extraction (Highest Priority & 0ms Accuracy)
+    entities = getattr(msg, 'entities', None) or []
+    for ent in entities:
+        ent_type = ent.__class__.__name__
+        if ent_type in ("MessageEntityCode", "MessageEntityPre"):
+            try:
+                candidate = raw[ent.offset : ent.offset + ent.length].strip()
+                clean_candidate = re.sub(r'[^A-Za-z0-9_-]', '', candidate).upper()
+                if 4 <= len(clean_candidate) <= 22:
+                    if clean_candidate not in EXCLUDED_CODE_WORDS:
+                        is_ex = check_is_exhausted(raw)
+                        return {"code": clean_candidate, "is_exhausted": is_ex, "source": "entity"}
+            except Exception:
+                pass
+
+    # 2. Resilient Regex Extraction on text
+    return extract_code_from_text(raw)
 
 async def redeem_single_account(
     session: aiohttp.ClientSession,
@@ -919,7 +989,7 @@ async def redeem_single_account(
                     result["is_expired"] = True
                     result["is_exhausted"] = True
                     EXHAUSTED_CODES.add(code)
-                elif param_code in ("PROMO_USED", "PROMO_FULL") or "FULL" in desc_str or "EXHAUST" in desc_str:
+                elif param_code in ("PROMO_USED", "PROMO_FULL") or "FULL" in desc_str or "EXHAUST" in desc_str or "ALL CLAIMED" in desc_str or "SPOTS" in desc_str:
                     result["code_status"] = "PROMO_FULL"
                     result["is_full"] = True
                     result["is_exhausted"] = True
@@ -929,7 +999,7 @@ async def redeem_single_account(
                     result["is_bad"] = True
                     result["is_exhausted"] = True
                     EXHAUSTED_CODES.add(code)
-                elif "ALREADY" in param_code or "CLAIMED" in param_code or "ALREADY" in desc_str or "CLAIMED" in desc_str:
+                elif param_code in ("ALREADY_CLAIMED", "PROMO_ALREADY_CLAIMED", "USER_ALREADY_CLAIMED") or desc_str in ("ALREADY_CLAIMED", "PROMO_ALREADY_CLAIMED") or "ALREADY CLAIMED" in desc_str:
                     result["code_status"] = "ALREADY_CLAIMED"
                     result["already_claimed"] = True
                     if uid not in ACCOUNT_CLAIMED_CODES:
@@ -1084,6 +1154,7 @@ async def snipe_promo_fleet(
             ]
             raw_results = await asyncio.gather(*tasks, return_exceptions=True)
             total_time = round(time.time() - t_start, 3)
+            duration = total_time
 
             results = []
             fleet_uids = list(fleet.keys())
@@ -1295,71 +1366,77 @@ async def snipe_promo_fleet(
 
 async def fetch_channel_codes_async(session: aiohttp.ClientSession) -> List[Dict[str, Any]]:
     """
-    High-frequency non-blocking async scraper for https://t.me/s/ChickenLandCodes.
+    High-frequency non-blocking async scraper for @ChickenLandCodes and @LandChickenNews.
     Bypasses Telegram's web preview CDN cache and deep-inspects individual post endpoints.
     """
     cache_buster = int(time.time() * 1000)
-    url = f"{CHANNEL_URL}?t={cache_buster}"
     headers = {
         "User-Agent": SCRAPER_UA,
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Pragma": "no-cache"
     }
 
-    try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=4)) as resp:
-            if resp.status != 200:
-                return []
-            html = await resp.text()
-    except Exception:
-        return []
-
-    post_ids = set(int(m) for m in re.findall(r'ChickenLandCodes/(\d+)', html))
-    sorted_pids = sorted(list(post_ids))
     found_codes = {}
 
-    # Deep inspect latest 4 individual post endpoints concurrently
-    latest_pids = sorted_pids[-4:] if sorted_pids else []
-    async def fetch_post(pid: int):
-        p_url = f"https://t.me/ChickenLandCodes/{pid}?t={cache_buster}"
+    async def scrape_channel(ch_info: Dict[str, Any]):
+        ch_uname = ch_info["username"]
+        ch_url = f"{ch_info['url']}?t={cache_buster}"
         try:
-            async with session.get(p_url, headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as p_resp:
-                p_html = await p_resp.text()
-                m = re.search(r'<meta property=[\"\']og:description[\"\'] content=[\"\']([^\"\']+)[\"\']', p_html)
-                if m:
-                    desc = m.group(1)
-                    parsed = extract_code_from_text(desc)
-                    if parsed:
-                        c = parsed["code"]
-                        if c not in found_codes:
-                            found_codes[c] = {
-                                "code": c,
-                                "is_exhausted": parsed["is_exhausted"],
-                                "post_id": pid,
-                                "raw_snippet": desc[:80].replace("\n", " ")
-                            }
+            async with session.get(ch_url, headers=headers, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                if resp.status != 200:
+                    return
+                html = await resp.text()
         except Exception:
-            pass
+            return
 
-    if latest_pids:
-        await asyncio.gather(*[fetch_post(p) for p in latest_pids])
+        post_ids = set(int(m) for m in re.findall(rf'{ch_uname}/(\d+)', html, re.IGNORECASE))
+        sorted_pids = sorted(list(post_ids))
 
-    # Visible channel message text fallback
-    pattern = r'<div class=\"tgme_widget_message_text[^>]*>(.*?)</div>'
-    messages = re.findall(pattern, html, re.DOTALL)
-    for msg in messages:
-        clean = re.sub(r'<[^>]+>', ' ', msg).strip()
-        parsed = extract_code_from_text(clean)
-        if parsed:
-            c = parsed["code"]
-            if c not in found_codes:
-                found_codes[c] = {
-                    "code": c,
-                    "is_exhausted": parsed["is_exhausted"],
-                    "post_id": None,
-                    "raw_snippet": clean[:80].replace("\n", " ")
-                }
+        # Deep inspect latest 3 individual post endpoints concurrently
+        latest_pids = sorted_pids[-3:] if sorted_pids else []
+        async def fetch_post(pid: int):
+            p_url = f"https://t.me/{ch_uname}/{pid}?t={cache_buster}"
+            try:
+                async with session.get(p_url, headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as p_resp:
+                    p_html = await p_resp.text()
+                    m = re.search(r'<meta property=[\"\']og:description[\"\'] content=[\"\']([^\"\']+)[\"\']', p_html)
+                    if m:
+                        desc = m.group(1)
+                        parsed = extract_code_from_text(desc)
+                        if parsed:
+                            c = parsed["code"]
+                            if c not in found_codes:
+                                found_codes[c] = {
+                                    "code": c,
+                                    "is_exhausted": parsed["is_exhausted"],
+                                    "post_id": pid,
+                                    "channel": ch_uname,
+                                    "raw_snippet": desc[:80].replace("\n", " ")
+                                }
+            except Exception:
+                pass
 
+        if latest_pids:
+            await asyncio.gather(*[fetch_post(p) for p in latest_pids])
+
+        # Visible channel message text fallback
+        pattern = r'<div class=\"tgme_widget_message_text[^>]*>(.*?)</div>'
+        messages = re.findall(pattern, html, re.DOTALL)
+        for msg in messages:
+            clean = re.sub(r'<[^>]+>', ' ', msg).strip()
+            parsed = extract_code_from_text(clean)
+            if parsed:
+                c = parsed["code"]
+                if c not in found_codes:
+                    found_codes[c] = {
+                        "code": c,
+                        "is_exhausted": parsed["is_exhausted"],
+                        "post_id": None,
+                        "channel": ch_uname,
+                        "raw_snippet": clean[:80].replace("\n", " ")
+                    }
+
+    await asyncio.gather(*[scrape_channel(ch) for ch in TARGET_CHANNELS])
     return list(found_codes.values())
 
 def fetch_channel_codes() -> List[Dict[str, Any]]:
@@ -1383,6 +1460,7 @@ def fetch_channel_codes() -> List[Dict[str, Any]]:
 
 ACTIVE_TELETHON_CLIENT = None
 ACTIVE_CHANNEL_ENTITY = None
+ACTIVE_CHANNEL_ENTITIES: Dict[str, Any] = {}
 
 # =====================================================================
 # REAL-TIME TELETHON MTPROTO CHANNEL EVENT LISTENER (0ms PUSH SOCKET)
@@ -1393,7 +1471,7 @@ async def start_mtproto_listener():
     Listens 24/7 to @ChickenLandCodes. The exact millisecond Telegram publishes or edits
     a post with a promo code, this handler triggers the sub-second parallel fleet burst!
     """
-    global ACTIVE_TELETHON_CLIENT, ACTIVE_CHANNEL_ENTITY
+    global ACTIVE_TELETHON_CLIENT, ACTIVE_CHANNEL_ENTITY, ACTIVE_CHANNEL_ENTITIES
     try:
         from telethon import TelegramClient, events
         from telethon.sessions import StringSession
@@ -1472,47 +1550,50 @@ async def start_mtproto_listener():
             me = await client.get_me()
             print(f"[MTProto Sniper] 🟢 Connected: {me.first_name} ({me.id})")
 
-            # Resolve channel entity and verify joined
-            entity = None
-            try:
-                entity = await client.get_entity(CHANNEL_USERNAME)
-                await client(JoinChannelRequest(entity))
-                print(f"[MTProto Sniper] Verified membership in @{CHANNEL_USERNAME} (ID {entity.id})")
-            except Exception as e:
-                print(f"[MTProto Sniper] Channel resolve notice: {e}")
+            # Resolve channel entities and verify joined for all TARGET_CHANNELS
+            valid_chat_ids = set(VALID_CHAT_IDS)
+            chat_targets = []
+            for ch in TARGET_CHANNELS:
+                ch_uname = ch["username"]
+                try:
+                    ent = await client.get_entity(ch_uname)
+                    await client(JoinChannelRequest(ent))
+                    ACTIVE_CHANNEL_ENTITIES[ch_uname.lower()] = ent
+                    chat_targets.append(ent)
+                    valid_chat_ids.add(ent.id)
+                    valid_chat_ids.add(-ent.id)
+                    try:
+                        from telethon import utils
+                        valid_chat_ids.add(utils.get_peer_id(ent))
+                    except Exception:
+                        pass
+                    print(f"[MTProto Sniper] Verified membership in @{ch_uname} (ID {ent.id})")
+                except Exception as e_ch:
+                    print(f"[MTProto Sniper] Channel resolve notice for @{ch_uname}: {e_ch}")
 
             ACTIVE_TELETHON_CLIENT = client
-            ACTIVE_CHANNEL_ENTITY = entity
-
-            valid_chat_ids = {CHANNEL_ID, RAW_CHANNEL_ID, -RAW_CHANNEL_ID}
-            if entity:
-                valid_chat_ids.add(entity.id)
-                valid_chat_ids.add(-entity.id)
-                try:
-                    from telethon import utils
-                    valid_chat_ids.add(utils.get_peer_id(entity))
-                except Exception:
-                    pass
-
-            chat_targets = [entity] if entity else [CHANNEL_USERNAME, CHANNEL_ID]
+            if "chickenlandcodes" in ACTIVE_CHANNEL_ENTITIES:
+                ACTIVE_CHANNEL_ENTITY = ACTIVE_CHANNEL_ENTITIES["chickenlandcodes"]
+            elif chat_targets:
+                ACTIVE_CHANNEL_ENTITY = chat_targets[0]
 
             if not handlers_registered:
-                # Define instant push handler for NEW messages (Bound directly to channel socket)
-                @client.on(events.NewMessage(chats=chat_targets))
+                # Define instant push handler for NEW messages (Sub-millisecond push via MTProto socket)
+                @client.on(events.NewMessage())
                 async def on_new_promo_message(event, valid_ids=valid_chat_ids):
                     cid = event.chat_id
                     uname = (getattr(event.chat, 'username', '') or '').lower()
-                    if cid not in valid_ids and uname != CHANNEL_USERNAME.lower():
+                    if cid not in valid_ids and uname not in CHANNEL_USERNAMES:
                         return
 
-                    raw = event.raw_text or (event.message.message if event.message else "") or ""
-                    parsed = extract_code_from_text(raw)
+                    parsed = extract_code_from_event(event)
                     if not parsed:
                         return
 
                     code = parsed["code"]
                     is_ex = parsed["is_exhausted"]
-                    print(f"[MTProto Sniper] ⚡ PUSH EVENT RECEIVED: Code={code}, Exhausted={is_ex}")
+                    src = parsed.get("source", "regex")
+                    print(f"[MTProto Sniper] ⚡ PUSH EVENT RECEIVED (@{uname or cid}): Code={code} ({src}), Exhausted={is_ex}")
 
                     if is_ex:
                         SEEN_CODES.add(code)
@@ -1528,20 +1609,20 @@ async def start_mtproto_listener():
                         print(f"✅ [MTProto Sniper] Burst complete for {code}: {report['claimed_count']}/{report['total_accounts']} claimed (+{report['total_coins']} coins) in {elapsed}s")
 
                 # Define instant push handler for EDITED messages
-                @client.on(events.MessageEdited(chats=chat_targets))
+                @client.on(events.MessageEdited())
                 async def on_edited_promo_message(event, valid_ids=valid_chat_ids):
                     cid = event.chat_id
                     uname = (getattr(event.chat, 'username', '') or '').lower()
-                    if cid not in valid_ids and uname != CHANNEL_USERNAME.lower():
+                    if cid not in valid_ids and uname not in CHANNEL_USERNAMES:
                         return
 
-                    raw = event.raw_text or (event.message.message if event.message else "") or ""
-                    parsed = extract_code_from_text(raw)
+                    parsed = extract_code_from_event(event)
                     if not parsed:
                         return
 
                     code = parsed["code"]
                     is_ex = parsed["is_exhausted"]
+                    src = parsed.get("source", "regex")
 
                     if is_ex:
                         SEEN_CODES.add(code)
@@ -1550,7 +1631,7 @@ async def start_mtproto_listener():
                         return
 
                     if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and code not in ACTIVE_SNIPING_MUTEX and not is_code_claimed(code) and not is_code_exhausted(code):
-                        print(f"🔥 [MTProto Sniper] CODE DETECTED IN EDITED MESSAGE: {code}! LAUNCHING BURST...")
+                        print(f"🔥 [MTProto Sniper] CODE DETECTED IN EDITED MESSAGE (@{uname or cid}): {code} ({src})! LAUNCHING BURST...")
                         report = await snipe_promo_fleet(code)
                         print(f"✅ [MTProto Sniper] Edit burst complete: {report['claimed_count']}/{report['total_accounts']} claimed (+{report['total_coins']} coins)")
 
@@ -1598,32 +1679,32 @@ async def start_http_poller(poll_interval: float = 1.5):
     async with aiohttp.ClientSession(connector=connector) as session:
         while True:
             try:
-                # 1. Direct MTProto Channel Polling safety check (throttled to max 1 request per 90s to strictly avoid FloodWait)
+                # 1. Direct MTProto Channel Polling check (throttled to 5.0s across all joined channels)
                 now_t = time.time()
-                if ACTIVE_TELETHON_CLIENT and ACTIVE_CHANNEL_ENTITY and (now_t - last_mtproto_poll > 90.0):
+                if ACTIVE_TELETHON_CLIENT and ACTIVE_CHANNEL_ENTITIES and (now_t - last_mtproto_poll > 5.0):
                     last_mtproto_poll = now_t
                     try:
-                        msgs = await ACTIVE_TELETHON_CLIENT.get_messages(ACTIVE_CHANNEL_ENTITY, limit=3)
-                        for m in msgs:
-                            raw = m.raw_text or (m.message if m else "") or ""
-                            parsed = extract_code_from_text(raw)
-                            if parsed:
-                                code = parsed["code"]
-                                is_ex = parsed["is_exhausted"]
-                                if is_ex:
-                                    SEEN_CODES.add(code)
-                                    EXHAUSTED_CODES.add(code)
-                                    mark_code_exhausted(code)
-                                    continue
-                                if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and code not in ACTIVE_SNIPING_MUTEX and not is_code_claimed(code) and not is_code_exhausted(code):
-                                    print(f"🔥 [MTProto Poller] Fresh active code: {code}! Triggering fleet burst...")
-                                    t0 = time.time()
-                                    rep = await snipe_promo_fleet(code)
-                                    print(f"✅ [MTProto Poller] Burst: {rep['claimed_count']}/{rep['total_accounts']} in {round(time.time() - t0, 3)}s")
+                        for ch_name, ch_entity in list(ACTIVE_CHANNEL_ENTITIES.items()):
+                            msgs = await ACTIVE_TELETHON_CLIENT.get_messages(ch_entity, limit=3)
+                            for m in msgs:
+                                parsed = extract_code_from_event(m)
+                                if parsed:
+                                    code = parsed["code"]
+                                    is_ex = parsed["is_exhausted"]
+                                    if is_ex:
+                                        SEEN_CODES.add(code)
+                                        EXHAUSTED_CODES.add(code)
+                                        mark_code_exhausted(code)
+                                        continue
+                                    if code not in CLAIMED_CODES and code not in EXHAUSTED_CODES and code not in ACTIVE_SNIPING_MUTEX and not is_code_claimed(code) and not is_code_exhausted(code):
+                                        print(f"🔥 [MTProto Poller @{ch_name}] Fresh active code: {code}! Triggering fleet burst...")
+                                        t0 = time.time()
+                                        rep = await snipe_promo_fleet(code)
+                                        print(f"✅ [MTProto Poller @{ch_name}] Burst: {rep['claimed_count']}/{rep['total_accounts']} in {round(time.time() - t0, 3)}s")
                     except Exception:
                         pass
 
-                # 2. HTTP Channel Web Scraper Fallback
+                # 2. HTTP Channel Web Scraper Fallback (concurrent across all TARGET_CHANNELS)
                 codes = await fetch_channel_codes_async(session)
                 for it in codes:
                     code = it["code"]
