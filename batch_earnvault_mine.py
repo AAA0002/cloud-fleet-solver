@@ -303,31 +303,23 @@ async def run_fleet():
     with open(accounts_file, "w") as f:
         json.dump(accounts, f, indent=2)
 
-    # Sync miniapp_tokens in Upstash Redis
-    upstash_url = os.getenv("UPSTASH_URL") or os.getenv("UPSTASH_REDIS_REST_URL")
-    upstash_token = os.getenv("UPSTASH_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN")
-    if upstash_url and upstash_token:
-        try:
-            req = urllib.request.Request(
-                f"{upstash_url}/get/miniapp_tokens",
-                headers={"Authorization": f"Bearer {upstash_token}"}
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                raw = json.loads(resp.read().decode()).get("result")
-                tokens = json.loads(raw) if isinstance(raw, str) else (raw or {})
-            for a in accounts:
-                u = str(a.get("user_id"))
-                if u in tokens and "earnvault_init_data" in a:
-                    tokens[u]["earnvault_init_data"] = a["earnvault_init_data"]
-            set_req = urllib.request.Request(
-                f"{upstash_url}/set/miniapp_tokens",
-                data=json.dumps(tokens).encode(),
-                headers={"Authorization": f"Bearer {upstash_token}"}
-            )
-            urllib.request.urlopen(set_req, timeout=8)
-            logger.info("✅ Synchronized earnvault_init_data across Upstash Redis miniapp_tokens!")
-        except Exception as e:
-            logger.warning(f"Upstash miniapp_tokens sync note: {e}")
+    # Sync miniapp_tokens in Turso LibSQL Primary SSOT
+    try:
+        from turso_mesh import turso_get, turso_set
+        tokens = turso_get("miniapp_tokens") or {}
+        if isinstance(tokens, str):
+            try:
+                tokens = json.loads(tokens)
+            except Exception:
+                tokens = {}
+        for a in accounts:
+            u = str(a.get("user_id"))
+            if u in tokens and "earnvault_init_data" in a:
+                tokens[u]["earnvault_init_data"] = a["earnvault_init_data"]
+        turso_set("miniapp_tokens", tokens)
+        logger.info("✅ Synchronized earnvault_init_data across Turso LibSQL miniapp_tokens!")
+    except Exception as e:
+        logger.warning(f"Turso miniapp_tokens sync note: {e}")
 
     logger.info("=" * 75)
     logger.info("🎉 Fleet-Wide EarnVault 🏦 Cycle Complete!")
